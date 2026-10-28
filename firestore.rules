@@ -1,0 +1,97 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Businesses
+    match /businesses/{businessId} {
+      allow read: if true;
+      allow create, update: if isValidId(businessId)
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120
+        && request.resource.data.tradeType is string
+        && request.resource.data.currency is string;
+      allow delete: if isAuthenticated();
+    }
+
+    // Users
+    match /users/{userId} {
+      allow read: if true;
+      allow create, update: if isValidId(userId)
+        && request.resource.data.name is string && request.resource.data.name.size() > 0
+        && request.resource.data.role in ['developer', 'owner', 'manager', 'cashier']
+        && request.resource.data.status in ['active', 'suspended'];
+      allow delete: if isAuthenticated();
+    }
+
+    // Products
+    match /products/{productId} {
+      allow read: if true;
+      allow create, update: if isValidId(productId)
+        && request.resource.data.name is string && request.resource.data.name.size() > 0
+        && request.resource.data.salePrice is number && request.resource.data.salePrice >= 0
+        && request.resource.data.stock is number;
+      allow delete: if isAuthenticated();
+    }
+
+    // Customers
+    match /customers/{customerId} {
+      allow read: if true;
+      allow create, update: if isValidId(customerId)
+        && request.resource.data.name is string && request.resource.data.name.size() > 0
+        && request.resource.data.phone is string;
+      allow delete: if isAuthenticated();
+    }
+
+    // Transactions
+    match /transactions/{transactionId} {
+      allow read: if true;
+      allow create: if isValidId(transactionId)
+        && request.resource.data.totalAmount is number && request.resource.data.totalAmount >= 0
+        && request.resource.data.ticketNumber is string
+        && request.resource.data.paymentMethod in ['cash', 'mobile_money', 'card', 'credit'];
+      allow update: if isValidId(transactionId)
+        && request.resource.data.status in ['completed', 'refunded'];
+      allow delete: if isAuthenticated();
+    }
+
+    // Cash Register Sessions
+    match /sessions/{sessionId} {
+      allow read: if true;
+      allow create, update: if isValidId(sessionId)
+        && request.resource.data.status in ['open', 'closed']
+        && request.resource.data.openingFloat is number;
+      allow delete: if isAuthenticated();
+    }
+
+    // Push Notifications
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow create, update: if isValidId(notificationId)
+        && request.resource.data.title is string && request.resource.data.title.size() > 0
+        && request.resource.data.message is string;
+      allow delete: if isAuthenticated();
+    }
+
+    // Stock Movements
+    match /movements/{movementId} {
+      allow read: if true;
+      allow create: if isValidId(movementId)
+        && request.resource.data.productId is string
+        && request.resource.data.type in ['in', 'out', 'sale', 'adjustment']
+        && request.resource.data.quantity is number;
+      allow update, delete: if isAuthenticated();
+    }
+
+    // System connection test doc
+    match /test/{testId} {
+      allow read, write: if true;
+    }
+  }
+}

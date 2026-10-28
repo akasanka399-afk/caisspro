@@ -1,0 +1,199 @@
+{
+  "entities": {
+    "Business": {
+      "title": "Business",
+      "description": "Information about a registered business or merchant in Caisse Pro",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 120 },
+        "tradeType": { "type": "string", "maxLength": 80 },
+        "currency": { "type": "string", "maxLength": 10 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "address": { "type": "string", "maxLength": 200 },
+        "ownerName": { "type": "string", "maxLength": 100 },
+        "subscriptionPlan": { "type": "string", "enum": ["starter", "pro", "enterprise"] },
+        "subscriptionStatus": { "type": "string", "enum": ["active", "trial", "expired", "suspended"] },
+        "subscriptionExpiresAt": { "type": "string" },
+        "totalSalesCount": { "type": "number" },
+        "developerFeeRate": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "tradeType", "currency", "ownerName", "subscriptionPlan", "subscriptionStatus"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access control for Caisse Pro",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "role": { "type": "string", "enum": ["developer", "owner", "manager", "cashier"] },
+        "businessId": { "type": "string" },
+        "pinCode": { "type": "string", "maxLength": 10 },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
+        "createdAt": { "type": "string" },
+        "lastLogin": { "type": "string" },
+        "avatar": { "type": "string" }
+      },
+      "required": ["id", "name", "role", "businessId", "status"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Item in inventory with barcode and real-time stock levels",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "code": { "type": "string", "maxLength": 50 },
+        "barcode": { "type": "string", "maxLength": 50 },
+        "name": { "type": "string", "maxLength": 150 },
+        "category": { "type": "string", "maxLength": 80 },
+        "purchasePrice": { "type": "number" },
+        "salePrice": { "type": "number" },
+        "stock": { "type": "number" },
+        "minStockAlert": { "type": "number" },
+        "unit": { "type": "string", "maxLength": 30 },
+        "imageUrl": { "type": "string" },
+        "isFavorite": { "type": "boolean" }
+      },
+      "required": ["id", "businessId", "name", "salePrice", "stock"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Client profile with credit tracking and transaction summary",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "address": { "type": "string", "maxLength": 200 },
+        "creditBalance": { "type": "number" },
+        "totalPurchases": { "type": "number" },
+        "lastPurchaseDate": { "type": "string" }
+      },
+      "required": ["id", "businessId", "name", "phone"]
+    },
+    "SaleTransaction": {
+      "title": "SaleTransaction",
+      "description": "Completed or refunded retail sale transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticketNumber": { "type": "string", "maxLength": 50 },
+        "businessId": { "type": "string" },
+        "cashierId": { "type": "string" },
+        "cashierName": { "type": "string", "maxLength": 100 },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string", "maxLength": 100 },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "discountTotal": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "mobile_money", "card", "credit"] },
+        "amountReceived": { "type": "number" },
+        "changeDue": { "type": "number" },
+        "developerFee": { "type": "number" },
+        "timestamp": { "type": "string" },
+        "status": { "type": "string", "enum": ["completed", "refunded"] }
+      },
+      "required": ["id", "ticketNumber", "businessId", "cashierId", "totalAmount", "paymentMethod", "timestamp", "status"]
+    },
+    "CashRegisterSession": {
+      "title": "CashRegisterSession",
+      "description": "Cash register open and close session for cashiers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "cashierId": { "type": "string" },
+        "cashierName": { "type": "string", "maxLength": 100 },
+        "openedAt": { "type": "string" },
+        "closedAt": { "type": "string" },
+        "openingFloat": { "type": "number" },
+        "expectedCash": { "type": "number" },
+        "actualCash": { "type": "number" },
+        "cashDifference": { "type": "number" },
+        "totalSalesAmount": { "type": "number" },
+        "totalSalesCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["open", "closed"] },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "businessId", "cashierId", "openedAt", "openingFloat", "status"]
+    },
+    "PushNotification": {
+      "title": "PushNotification",
+      "description": "System and business event push notifications",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "targetRole": { "type": "string", "enum": ["all", "developer", "owner", "manager", "cashier"] },
+        "businessId": { "type": "string" },
+        "businessName": { "type": "string", "maxLength": 120 },
+        "title": { "type": "string", "maxLength": 150 },
+        "message": { "type": "string", "maxLength": 500 },
+        "type": { "type": "string", "enum": ["sale_milestone", "low_stock", "subscription", "security", "system"] },
+        "timestamp": { "type": "string" },
+        "read": { "type": "boolean" },
+        "priority": { "type": "string", "enum": ["normal", "high", "urgent"] }
+      },
+      "required": ["id", "targetRole", "title", "message", "type", "timestamp", "read"]
+    },
+    "StockMovement": {
+      "title": "StockMovement",
+      "description": "Audit trail log of stock entry, sale, return or adjustment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string", "maxLength": 150 },
+        "type": { "type": "string", "enum": ["in", "out", "sale", "adjustment"] },
+        "quantity": { "type": "number" },
+        "previousStock": { "type": "number" },
+        "newStock": { "type": "number" },
+        "reason": { "type": "string", "maxLength": 200 },
+        "userName": { "type": "string", "maxLength": 100 },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "businessId", "productId", "type", "quantity", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/businesses/{businessId}": {
+      "schema": "Business",
+      "description": "Registered merchant businesses and subscription records"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "System and business user profiles with roles"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Inventory items and real-time stock balances"
+    },
+    "/customers/{customerId}": {
+      "schema": "Customer",
+      "description": "Registered customers and credit ledgers"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "SaleTransaction",
+      "description": "Point-of-sale sales logs and receipts"
+    },
+    "/sessions/{sessionId}": {
+      "schema": "CashRegisterSession",
+      "description": "Register shift sessions and cash reconciliation"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "PushNotification",
+      "description": "System, owner and cashier notifications"
+    },
+    "/movements/{movementId}": {
+      "schema": "StockMovement",
+      "description": "Inventory movement and replenishment audit logs"
+    }
+  }
+}

@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+@layer base {
+  :root, .theme-light, [data-theme="light"] {
+    --bg-canvas: #f8fafc;
+    --bg-surface: #ffffff;
+    --bg-surface-muted: #f1f5f9;
+    --bg-surface-elevated: #ffffff;
+    --border-subtle: #e2e8f0;
+    --border-strong: #cbd5e1;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #64748b;
+    --brand-primary: #d97706;
+    --brand-accent: #059669;
+    --accent-highlight: #f59e0b;
+    --kpi-glow: none;
+    --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+    --card-shadow-hover: 0 4px 6px -1px rgb(0 0 0 / 0.08), 0 2px 4px -2px rgb(0 0 0 / 0.06);
+    --numpad-bg: #f8fafc;
+    --numpad-btn: #ffffff;
+    --numpad-border: #cbd5e1;
+    --numpad-active: #e2e8f0;
+  }
+
+  .theme-neon, [data-theme="neon"] {
+    --bg-canvas: #05070c;
+    --bg-surface: #0a0d18;
+    --bg-surface-muted: #0f1424;
+    --bg-surface-elevated: #13192f;
+    --border-subtle: rgba(56, 189, 248, 0.22);
+    --border-strong: rgba(56, 189, 248, 0.5);
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --brand-primary: #00f2fe;
+    --brand-accent: #10b981;
+    --accent-highlight: #ff007a;
+    --kpi-glow: 0 0 25px rgba(0, 242, 254, 0.25);
+    --card-shadow: 0 0 15px -2px rgba(0, 242, 254, 0.15), inset 0 0 1px rgba(0, 242, 254, 0.4);
+    --card-shadow-hover: 0 0 24px 0 rgba(0, 242, 254, 0.35), inset 0 0 2px rgba(0, 242, 254, 0.8);
+    --numpad-bg: #090c16;
+    --numpad-btn: #0f1527;
+    --numpad-border: rgba(0, 242, 254, 0.3);
+    --numpad-active: #00f2fe;
+  }
+
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Theme Utilities */
+.theme-light {
+  color-scheme: light;
+}
+
+.theme-neon {
+  color-scheme: dark;
+}
+
+/* Neon glow helper classes */
+.theme-neon .neon-text-cyan {
+  color: #00f2fe;
+  text-shadow: 0 0 10px rgba(0, 242, 254, 0.7), 0 0 20px rgba(0, 242, 254, 0.4);
+}
+
+.theme-neon .neon-text-green {
+  color: #10b981;
+  text-shadow: 0 0 10px rgba(16, 185, 129, 0.7), 0 0 20px rgba(16, 185, 129, 0.3);
+}
+
+.theme-neon .neon-text-magenta {
+  color: #ff007a;
+  text-shadow: 0 0 10px rgba(255, 0, 122, 0.7), 0 0 20px rgba(255, 0, 122, 0.3);
+}
+
+.theme-neon .neon-text-amber {
+  color: #fbbf24;
+  text-shadow: 0 0 10px rgba(251, 191, 36, 0.7), 0 0 20px rgba(251, 191, 36, 0.3);
+}
+
+.theme-neon .neon-border-pulse {
+  border-color: rgba(0, 242, 254, 0.5);
+  box-shadow: 0 0 12px rgba(0, 242, 254, 0.25);
+}
+
+.theme-neon .neon-card {
+  background: linear-gradient(145deg, #0a0d18 0%, #0d1222 100%);
+  border: 1px solid rgba(0, 242, 254, 0.25);
+  box-shadow: 0 0 20px -3px rgba(0, 242, 254, 0.12);
+}
+
+.theme-neon .neon-card:hover {
+  border-color: rgba(0, 242, 254, 0.6);
+  box-shadow: 0 0 25px rgba(0, 242, 254, 0.25);
+}
+
+/* Light mode crisp styling */
+.theme-light .retail-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.03);
+}
+
+.theme-light .retail-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.06), 0 2px 4px -2px rgb(0 0 0 / 0.04);
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+.theme-light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.theme-neon ::-webkit-scrollbar-thumb {
+  background: rgba(0, 242, 254, 0.3);
+  border-radius: 9999px;
+  box-shadow: 0 0 6px rgba(0, 242, 254, 0.5);
+}
+.theme-neon ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 242, 254, 0.6);
+}
+
+/* Thermal receipt printable styles */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #thermal-receipt-print-area, #thermal-receipt-print-area * {
+    visibility: visible;
+  }
+  #thermal-receipt-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    margin: 0;
+    padding: 10px;
+    background: white !important;
+    color: black !important;
+  }
+}
