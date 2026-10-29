@@ -84,6 +84,7 @@ export interface SaleTransaction {
   cashierName: string;
   customerId?: string;
   customerName?: string;
+  customerPhone?: string;
   items: {
     productId: string;
     productName: string;

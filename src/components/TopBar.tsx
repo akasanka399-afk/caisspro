@@ -14,6 +14,7 @@ import {
   X,
   AlertCircle,
   Cloud,
+  Menu,
 } from 'lucide-react';
 import { subscribeSyncState, CloudSyncState } from '../services/firebaseSync';
 
@@ -37,6 +38,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const { theme, setTheme } = useTheme();
   const [notifications, setNotifications] = useState<PushNotification[]>([]);
   const [showNotifDropdown, setShowNotifDropdown] = useState<boolean>(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
 
   // Hidden developer console secret access: 3 clicks on "Caisse Pro" + PIN 76127809
   const [logoClickCount, setLogoClickCount] = useState<number>(0);
@@ -143,13 +145,14 @@ export const TopBar: React.FC<TopBarProps> = ({
   };
 
   return (
-    <header
-      className={`h-[65px] border-b flex items-center justify-between gap-6 px-4 md:px-6 select-none shrink-0 relative z-40 transition-colors duration-200 ${
-        isLight
-          ? 'bg-white border-slate-200 text-slate-900 shadow-xs'
-          : 'bg-[#070913] border-cyan-500/25 text-white shadow-[0_4px_20px_rgba(0,242,254,0.06)]'
-      }`}
-    >
+    <div className="sticky top-0 z-40 shrink-0 w-full">
+      <header
+        className={`h-[58px] sm:h-[65px] border-b flex items-center justify-between gap-3 md:gap-6 px-3 sm:px-4 md:px-6 select-none transition-colors duration-200 backdrop-blur-md ${
+          isLight
+            ? 'bg-white/95 border-slate-200 text-slate-900 shadow-xs'
+            : 'bg-[#070913]/95 border-cyan-500/25 text-white shadow-[0_4px_20px_rgba(0,242,254,0.06)]'
+        }`}
+      >
       {/* Zone 1: Single text element wordmark with secret triple-click detection */}
       <div className="flex items-center gap-3 shrink-0">
         <button
@@ -485,5 +488,42 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
       )}
     </header>
+
+    {/* Persistent mobile navigation bar so menus NEVER disappear during typing or viewport resizing */}
+    <div
+      className={`md:hidden flex items-center gap-1.5 overflow-x-auto px-3 py-1.5 border-b text-xs shrink-0 select-none transition-colors ${
+        isLight
+          ? 'bg-slate-50/95 border-slate-200 text-slate-800'
+          : 'bg-[#090d1f]/95 border-cyan-500/20 text-neutral-300'
+      }`}
+    >
+      {navLinks.map((link) => {
+        const isActive = activeView === link.id;
+        return (
+          <button
+            key={link.id}
+            onClick={() => {
+              if (link.id === 'session') {
+                onOpenCashSessionModal();
+              } else {
+                onNavigate(link.id);
+              }
+            }}
+            className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+              isActive
+                ? isLight
+                  ? 'bg-amber-500 text-white font-bold shadow-xs'
+                  : 'bg-cyan-400 text-neutral-950 font-bold shadow-[0_0_12px_rgba(0,242,254,0.6)]'
+                : isLight
+                ? 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                : 'bg-neutral-900 text-neutral-400 border border-neutral-800 hover:text-white'
+            }`}
+          >
+            {link.label}
+          </button>
+        );
+      })}
+    </div>
+  </div>
   );
 };

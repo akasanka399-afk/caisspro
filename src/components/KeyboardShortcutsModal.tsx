@@ -14,17 +14,18 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({ 
     { key: 'F1', desc: 'Ouvrir ce guide des raccourcis clavier' },
     { key: 'F2', desc: 'Recherche rapide de produit par nom' },
     { key: 'F3', desc: 'Scanner ou saisir un code-barres' },
-    { key: 'F4', desc: 'Sélectionner ou changer le client' },
+    { key: 'F4', desc: 'Sélectionner ou saisir le client (figurera sur le reçu)' },
     { key: 'F5', desc: 'Basculer vers la Caisse Rapide (Saisie Directe du Montant)' },
     { key: 'F8', desc: 'Appliquer une remise sur le ticket' },
     { key: 'F9', desc: 'Règlement rapide en Espèces (Cash)' },
     { key: 'F10', desc: 'Règlement Mobile Money (Wave / Orange)' },
     { key: 'F11', desc: 'Règlement Carte Bancaire' },
-    { key: 'F12', desc: 'Imprimer le dernier ticket de caisse (format thermique)' },
+    { key: 'F12', desc: 'Imprimer le ticket de caisse (format thermique avec caissière & client)' },
+    { key: '+', desc: 'Caisse Rapide : Ajouter montant et quantité au ticket' },
     { key: 'Entrée', desc: 'Valider et finaliser l\'encaissement' },
     { key: 'Espace', desc: 'Appoint exact (espèces reçues = total)' },
-    { key: 'Échap', desc: 'Annuler / Vider le panier / Fermer modal' },
-    { key: '+ / -', desc: 'Augmenter ou réduire la quantité de l\'article sélectionné' },
+    { key: 'Échap', desc: 'Annuler / Vider le panier ou le ticket' },
+    { key: '+ / -', desc: 'Catalogue : Augmenter ou réduire la quantité de l\'article' },
   ];
 
   return (

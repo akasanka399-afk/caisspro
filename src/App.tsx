@@ -119,7 +119,7 @@ function MainLayout() {
       />
 
       {/* Main Content Area based on Active View */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="flex-1 flex flex-col min-h-0">
         {activeView === 'pos' && (
           <POSView currentUser={currentUser} business={currentBusiness} />
         )}

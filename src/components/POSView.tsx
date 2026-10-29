@@ -27,9 +27,11 @@ import {
   Sparkles,
   Tag,
   Receipt,
+  Phone,
 } from 'lucide-react';
 import { ReceiptModal } from './ReceiptModal';
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
+import { printThermalReceipt } from '../utils/printReceipt';
 
 interface POSViewProps {
   currentUser: User;
@@ -66,23 +68,34 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [completedTx, setCompletedTx] = useState<SaleTransaction | null>(null);
 
-  // Mode Caisse Rapide (Saisie Directe du Montant) State
+  // Mode Caisse Rapide (Saisie Directe du Montant & Multi-Articles & Quantités) State
   const [directAmount, setDirectAmount] = useState<string>('');
   const [directLabel, setDirectLabel] = useState<string>('Vente Directe');
+  const [directQuantity, setDirectQuantity] = useState<number>(1);
+  const [directItems, setDirectItems] = useState<{
+    id: string;
+    label: string;
+    amount: number;
+    quantity: number;
+  }[]>([]);
   const [directPaymentMethod, setDirectPaymentMethod] = useState<PaymentMethod>('cash');
   const [directCashReceived, setDirectCashReceived] = useState<string>('');
+  const [directCustomerName, setDirectCustomerName] = useState<string>('');
+  const [directCustomerPhone, setDirectCustomerPhone] = useState<string>('');
   const [directCustomerNote, setDirectCustomerNote] = useState<string>('');
 
   // Modals
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
   const [showCustomerModal, setShowCustomerModal] = useState<boolean>(false);
   const [quickBarcodeNotice, setQuickBarcodeNotice] = useState<string | null>(null);
+  const [globalNotice, setGlobalNotice] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   // Refs for keyboard navigation & direct typing
   const searchInputRef = useRef<HTMLInputElement>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const cashInputRef = useRef<HTMLInputElement>(null);
   const directInputRef = useRef<HTMLInputElement>(null);
+  const directLabelInputRef = useRef<HTMLInputElement>(null);
 
   // Load products & customers
   const refreshData = () => {
@@ -107,17 +120,23 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   const numReceived = parseFloat(amountReceived) || 0;
   const changeDue = Math.max(0, numReceived - cartTotal);
 
-  // Mode Caisse Rapide calculations
+  // Mode Caisse Rapide calculations (Multi-montants cumulés avec prise en compte des quantités)
   const numDirectAmount = parseFloat(directAmount) || 0;
+  const directItemsSum = directItems.reduce((acc, it) => acc + (it.amount * it.quantity), 0);
+  const activeLineAmount = numDirectAmount > 0 ? numDirectAmount * Math.max(1, directQuantity) : 0;
+  const totalDirectToPay = directItems.length > 0
+    ? directItemsSum + activeLineAmount
+    : activeLineAmount;
   const numDirectReceived = parseFloat(directCashReceived) || 0;
-  const directChangeDue = Math.max(0, numDirectReceived - numDirectAmount);
+  const directChangeDue = Math.max(0, numDirectReceived - totalDirectToPay);
+  const totalDirectItemsCount = directItems.reduce((acc, it) => acc + it.quantity, 0) + (numDirectAmount > 0 ? Math.max(1, directQuantity) : 0);
 
   // Keep directCashReceived in sync if not cash
   useEffect(() => {
     if (directPaymentMethod !== 'cash') {
-      setDirectCashReceived(directAmount);
+      setDirectCashReceived(String(totalDirectToPay));
     }
-  }, [directPaymentMethod, directAmount]);
+  }, [directPaymentMethod, totalDirectToPay]);
 
   // Focus direct input when switching to direct mode
   useEffect(() => {
@@ -135,22 +154,34 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     }
   }, [paymentMethod, cartTotal]);
 
-  // Handle printing the latest receipt formatted for thermal printers using #thermal-receipt-print-area
-  const handlePrintTicket = () => {
+  // Handle printing the latest receipt formatted for thermal printers
+  const handlePrintTicket = async () => {
     const transactions = store.getTransactions(business.id);
     const targetTx = completedTx || transactions[0];
 
     if (!targetTx) {
       playSoundEffect('error');
-      alert('Aucun ticket de vente disponible pour ce commerce.');
+      setGlobalNotice({
+        message: 'Aucun ticket de vente disponible pour ce commerce. Effectuez une vente au préalable.',
+        type: 'error',
+      });
+      setTimeout(() => setGlobalNotice(null), 4000);
       return;
     }
 
     setCompletedTx(targetTx);
     playSoundEffect('beep');
-    setTimeout(() => {
-      window.print();
-    }, 150);
+    setGlobalNotice({
+      message: `Impression thermique du ticket ${targetTx.ticketNumber} en cours...`,
+      type: 'success',
+    });
+    setTimeout(() => setGlobalNotice(null), 3500);
+
+    try {
+      await printThermalReceipt(targetTx, business);
+    } catch (err) {
+      console.error('Erreur lors de l’impression du ticket:', err);
+    }
   };
 
   // Keyboard shortcut listener for both modes
@@ -215,20 +246,28 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         else if (showCustomerModal) setShowCustomerModal(false);
         else if (completedTx) setCompletedTx(null);
         else if (posMode === 'direct') {
-          setDirectAmount('');
+          if (directAmount !== '') {
+            setDirectAmount('');
+          } else if (directItems.length > 0) {
+            setDirectItems([]);
+          }
           setDirectCashReceived('');
         } else {
           setSearchQuery('');
           setBarcodeInput('');
         }
+      } else if ((e.key === '+' || e.key === '=') && posMode === 'direct' && !isInputActive) {
+        // Key +: Add current amount to ticket
+        e.preventDefault();
+        handleAddDirectItem();
       } else if (e.key === ' ' && !isInputActive) {
         // Space key: exact tender
         e.preventDefault();
         if (posMode === 'catalog' && cart.length > 0) {
           setAmountReceived(String(cartTotal));
           playSoundEffect('beep');
-        } else if (posMode === 'direct' && numDirectAmount > 0) {
-          setDirectCashReceived(String(numDirectAmount));
+        } else if (posMode === 'direct' && totalDirectToPay > 0) {
+          setDirectCashReceived(String(totalDirectToPay));
           playSoundEffect('beep');
         }
       } else if (e.key === 'Enter' && !isInputActive) {
@@ -266,8 +305,14 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     amountReceived,
     directAmount,
     numDirectAmount,
+    directItems,
+    totalDirectToPay,
+    directLabel,
+    directQuantity,
     directPaymentMethod,
     directCashReceived,
+    directCustomerName,
+    directCustomerPhone,
     showShortcutsModal,
     showCustomerModal,
     completedTx,
@@ -393,6 +438,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       cashierName: currentUser.name,
       customerId: customer?.id,
       customerName: customer?.name,
+      customerPhone: customer?.phone,
       items: cart.map((i) => ({
         productId: i.product.id,
         productName: i.product.name,
@@ -418,11 +464,75 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     setAmountReceived('');
   };
 
+  // Mode Caisse Rapide: Add item/amount to current ticket with quantity
+  const handleAddDirectItem = () => {
+    if (numDirectAmount <= 0) {
+      playSoundEffect('error');
+      alert('Veuillez saisir un montant supérieur à 0 F.');
+      directInputRef.current?.focus();
+      return;
+    }
+
+    const itemLabel = (directLabel && directLabel.trim().length > 0)
+      ? directLabel.trim()
+      : `Article ${directItems.length + 1}`;
+
+    const itemQuantity = Math.max(1, directQuantity);
+
+    const newItem = {
+      id: `it_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      label: itemLabel,
+      amount: numDirectAmount,
+      quantity: itemQuantity,
+    };
+
+    setDirectItems((prev) => [...prev, newItem]);
+    setDirectAmount('');
+    setDirectQuantity(1); // Reset quantity back to 1 for the next item
+    playSoundEffect('beep');
+    setTimeout(() => {
+      directInputRef.current?.focus();
+    }, 50);
+  };
+
+  // Update quantity of an already added item in the accumulated ticket
+  const handleUpdateDirectItemQuantity = (itemId: string, delta: number) => {
+    playSoundEffect('beep');
+    setDirectItems((prev) =>
+      prev
+        .map((it) => {
+          if (it.id === itemId) {
+            const nextQty = it.quantity + delta;
+            return nextQty > 0 ? { ...it, quantity: nextQty } : null;
+          }
+          return it;
+        })
+        .filter((it): it is { id: string; label: string; amount: number; quantity: number } => it !== null)
+    );
+  };
+
+  const handleRemoveDirectItem = (itemId: string) => {
+    playSoundEffect('beep');
+    setDirectItems((prev) => prev.filter((it) => it.id !== itemId));
+  };
+
+  const handleClearDirectTicket = () => {
+    playSoundEffect('beep');
+    setDirectItems([]);
+    setDirectAmount('');
+    setDirectQuantity(1);
+    setDirectCashReceived('');
+    setTimeout(() => {
+      directInputRef.current?.focus();
+    }, 50);
+  };
+
   // Mode Caisse Rapide: Tactile numpad press
   const handleDirectNumpadPress = (val: string) => {
     playSoundEffect('beep');
     if (val === 'clear') {
       setDirectAmount('');
+      setDirectQuantity(1);
       setDirectCashReceived('');
     } else if (val === 'backspace') {
       setDirectAmount((prev) => prev.slice(0, -1));
@@ -430,6 +540,8 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       if (directAmount && directAmount !== '0') {
         setDirectAmount((prev) => prev + '00');
       }
+    } else if (val === 'add_item') {
+      handleAddDirectItem();
     } else {
       // Numbers 0-9
       setDirectAmount((prev) => {
@@ -448,59 +560,97 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     });
   };
 
-  // Mode Caisse Rapide: Validate sale
+  // Mode Caisse Rapide: Validate sale (accumulates all directItems + current typed amount and attaches cashier and customer)
   const handleValidateDirectSale = () => {
-    if (numDirectAmount <= 0) {
+    const itemsToSale: {
+      productId: string;
+      productName: string;
+      barcode: string;
+      quantity: number;
+      unitPrice: number;
+      total: number;
+    }[] = [];
+
+    // 1. All accumulated ticket items
+    directItems.forEach((it) => {
+      itemsToSale.push({
+        productId: `prod_direct_${it.id}`,
+        productName: it.label,
+        barcode: `EXPRESS-${it.id.slice(-6)}`,
+        quantity: it.quantity,
+        unitPrice: it.amount,
+        total: it.amount * it.quantity,
+      });
+    });
+
+    // 2. Plus any unadded amount in the input currently being typed
+    if (numDirectAmount > 0) {
+      const activeLabel = (directLabel && directLabel.trim().length > 0)
+        ? directLabel.trim()
+        : (directItems.length > 0 ? `Article ${directItems.length + 1}` : 'Vente Caisse Rapide');
+      const activeQty = Math.max(1, directQuantity);
+      itemsToSale.push({
+        productId: `prod_direct_${Date.now()}`,
+        productName: activeLabel,
+        barcode: `EXPRESS-${Date.now().toString().slice(-6)}`,
+        quantity: activeQty,
+        unitPrice: numDirectAmount,
+        total: numDirectAmount * activeQty,
+      });
+    }
+
+    if (itemsToSale.length === 0) {
       playSoundEffect('error');
-      alert('Veuillez saisir un montant valide supérieur à 0 F.');
+      alert('Veuillez saisir au moins un montant pour enregistrer la vente.');
       directInputRef.current?.focus();
       return;
     }
 
+    const totalToPay = itemsToSale.reduce((acc, it) => acc + it.total, 0);
+
     if (directPaymentMethod === 'cash') {
-      const rec = numDirectReceived || numDirectAmount;
-      if (rec < numDirectAmount) {
+      const rec = numDirectReceived || totalToPay;
+      if (rec < totalToPay) {
         playSoundEffect('error');
-        alert(`Montant remis (${rec} F) insuffisant pour régler ${numDirectAmount} F CFA.`);
+        alert(`Montant remis (${rec} F) insuffisant pour régler ${totalToPay} F CFA.`);
         return;
       }
     }
 
     setIsProcessing(true);
 
+    // Resolve customer information (either from directory or directly typed)
     const customer = customers.find((c) => c.id === selectedCustomerId);
-    const itemTitle = directLabel || 'Vente Caisse Rapide';
+    const finalCustomerName = customer?.name || (directCustomerName.trim().length > 0 ? directCustomerName.trim() : undefined);
+    const finalCustomerPhone = customer?.phone || (directCustomerPhone.trim().length > 0 ? directCustomerPhone.trim() : undefined);
 
     const tx = store.completeSale({
       businessId: business.id,
       cashierId: currentUser.id,
       cashierName: currentUser.name,
       customerId: customer?.id,
-      customerName: customer?.name,
-      items: [
-        {
-          productId: 'prod_direct_' + Date.now(),
-          productName: itemTitle,
-          barcode: 'EXPRESS-' + Date.now().toString().slice(-6),
-          quantity: 1,
-          unitPrice: numDirectAmount,
-          total: numDirectAmount,
-        },
-      ],
-      subtotal: numDirectAmount,
+      customerName: finalCustomerName,
+      customerPhone: finalCustomerPhone,
+      items: itemsToSale,
+      subtotal: totalToPay,
       discountTotal: 0,
-      totalAmount: numDirectAmount,
+      totalAmount: totalToPay,
       paymentMethod: directPaymentMethod,
-      amountReceived: directPaymentMethod === 'cash' ? (numDirectReceived || numDirectAmount) : numDirectAmount,
-      changeDue: directPaymentMethod === 'cash' ? Math.max(0, (numDirectReceived || numDirectAmount) - numDirectAmount) : 0,
+      amountReceived: directPaymentMethod === 'cash' ? (numDirectReceived || totalToPay) : totalToPay,
+      changeDue: directPaymentMethod === 'cash' ? Math.max(0, (numDirectReceived || totalToPay) - totalToPay) : 0,
     });
 
     setCompletedTx(tx);
     setIsProcessing(false);
 
     // Reset direct register ready for the next customer
+    setDirectItems([]);
     setDirectAmount('');
+    setDirectQuantity(1);
     setDirectCashReceived('');
+    setDirectCustomerName('');
+    setDirectCustomerPhone('');
+    setSelectedCustomerId('');
     setTimeout(() => {
       directInputRef.current?.focus();
     }, 100);
@@ -522,14 +672,14 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
   return (
     <div
-      className={`flex-1 flex flex-col h-[calc(100vh-65px)] overflow-hidden select-none transition-colors duration-200 ${
+      className={`flex-1 flex flex-col min-h-0 overflow-y-auto lg:overflow-hidden select-none transition-colors duration-200 ${
         isLight ? 'bg-slate-100/70 text-slate-900' : 'bg-[#05070c] text-white'
       }`}
     >
       {/* TOP DUAL-MODE SWITCHER BAR (Catalogue Articles vs Caisse Rapide Saisie Directe) */}
       <div
-        className={`px-4 py-2 border-b flex flex-wrap items-center justify-between gap-3 shrink-0 ${
-          isLight ? 'bg-white border-slate-200 shadow-2xs' : 'bg-[#080b18] border-cyan-500/20'
+        className={`sticky top-0 z-20 px-3 sm:px-4 py-2 border-b flex flex-wrap items-center justify-between gap-2 sm:gap-3 shrink-0 backdrop-blur-md ${
+          isLight ? 'bg-white/95 border-slate-200 shadow-2xs' : 'bg-[#080b18]/95 border-cyan-500/20'
         }`}
       >
         {/* Mode Selector Tabs */}
@@ -607,16 +757,44 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         </div>
       </div>
 
+      {/* Global Notice Toast (Impression, alertes caisse) */}
+      {globalNotice && (
+        <div
+          className={`px-4 py-2 text-xs font-semibold flex items-center justify-between border-b transition-all shrink-0 z-30 ${
+            globalNotice.type === 'error'
+              ? 'bg-rose-500/15 border-rose-500/30 text-rose-500'
+              : globalNotice.type === 'success'
+              ? isLight
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                : 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+              : isLight
+              ? 'bg-blue-50 border-blue-200 text-blue-800'
+              : 'bg-cyan-950/60 border-cyan-500/30 text-cyan-300'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <Printer className="w-4 h-4 shrink-0" />
+            <span>{globalNotice.message}</span>
+          </div>
+          <button
+            onClick={() => setGlobalNotice(null)}
+            className="p-1 hover:opacity-100 opacity-60 text-sm font-bold cursor-pointer"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* ========================================================================= */}
       {/* MODULE 1: CAISSE RAPIDE DIRECTE (Saisie Clavier d'ordinateur + Tactile)   */}
       {/* ========================================================================= */}
       {posMode === 'direct' && (
-        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden p-3 md:p-5 gap-4">
+        <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-y-auto lg:overflow-hidden p-2.5 sm:p-4 gap-3 sm:gap-4">
           {/* Main Direct Cash Register Pad (Left / Center) */}
-          <div className="flex-1 flex flex-col justify-between max-w-3xl mx-auto w-full space-y-3.5 overflow-y-auto">
+          <div className="flex-1 flex flex-col justify-between max-w-3xl mx-auto w-full space-y-3 min-h-0 overflow-y-auto pr-0 sm:pr-1">
             {/* BIG NUMERIC DISPLAY & KEYBOARD INPUT */}
             <div
-              className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${
+              className={`p-4 sm:p-5 rounded-2xl border transition-all flex flex-col justify-between ${
                 isLight
                   ? 'retail-card bg-white border-slate-300 shadow-sm'
                   : 'neon-card bg-[#0a0d1e] border-cyan-500/40 shadow-[0_0_25px_rgba(0,242,254,0.1)]'
@@ -627,15 +805,23 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   isLight ? 'text-amber-800' : 'text-cyan-400'
                 }`}>
                   <Sparkles className="w-4 h-4" />
-                  <span>Montant de la Vente (Saisie Clavier ou Tactile)</span>
+                  <span>
+                    {numDirectAmount > 0
+                      ? (directQuantity > 1 ? `Montant × Qté (${directQuantity})` : "Montant de l'article en cours")
+                      : directItems.length > 0
+                      ? "Total cumulé du ticket"
+                      : "Montant de la Vente (Saisie Clavier ou Tactile)"}
+                  </span>
                 </span>
                 <span className={`font-mono text-[11px] ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
-                  Tapez directement sur votre clavier
+                  {directItems.length > 0
+                    ? `${directItems.length} article(s) au ticket`
+                    : "Tapez le montant sur votre clavier"}
                 </span>
               </div>
 
               {/* Display Box */}
-              <div className="relative flex items-center justify-between py-2">
+              <div className="relative flex flex-col justify-center py-2">
                 {/* Hidden autofocus input that captures physical keyboard keystrokes effortlessly */}
                 <input
                   ref={directInputRef}
@@ -654,7 +840,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 <div
                   onClick={() => directInputRef.current?.focus()}
                   className={`w-full font-mono font-black text-4xl sm:text-5xl md:text-6xl tracking-tight text-right select-all cursor-text py-1 ${
-                    numDirectAmount > 0
+                    (numDirectAmount > 0 || directItems.length > 0)
                       ? isLight
                         ? 'text-slate-900'
                         : 'text-cyan-300 neon-text-cyan'
@@ -663,13 +849,25 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                       : 'text-neutral-700'
                   }`}
                 >
-                  {numDirectAmount > 0 ? formatMoney(numDirectAmount, '') : '0'}
+                  {numDirectAmount > 0
+                    ? formatMoney(numDirectAmount * Math.max(1, directQuantity), '')
+                    : directItems.length > 0
+                    ? formatMoney(totalDirectToPay, '')
+                    : '0'}
                   <span className={`text-xl sm:text-2xl md:text-3xl ml-2 font-bold ${
                     isLight ? 'text-amber-700' : 'text-cyan-400'
                   }`}>
                     F CFA
                   </span>
                 </div>
+
+                {numDirectAmount > 0 && directQuantity > 1 && (
+                  <div className={`text-right text-xs font-mono font-bold mt-0.5 ${
+                    isLight ? 'text-amber-700' : 'text-cyan-400'
+                  }`}>
+                    Détail : {directQuantity} × {formatMoney(numDirectAmount)} F
+                  </div>
+                )}
               </div>
 
               {/* Quick Preset Adders (+100F, +500F, etc.) */}
@@ -696,37 +894,415 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               </div>
             </div>
 
-            {/* QUICK CATEGORY / MOTIF PRESETS */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-              {[
-                'Vente Directe',
-                'Alimentation',
-                'Boissons',
-                'Télécom / Recharges',
-                'Pain & Snacks',
-                'Divers Comptoir',
-              ].map((label) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => {
-                    setDirectLabel(label);
-                    playSoundEffect('beep');
-                  }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors border cursor-pointer ${
-                    directLabel === label
-                      ? isLight
-                        ? 'bg-slate-900 text-white border-slate-900'
-                        : 'bg-cyan-400 text-neutral-950 font-bold border-cyan-400 shadow-[0_0_10px_rgba(0,242,254,0.5)]'
-                      : isLight
-                      ? 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+            {/* LIBELLÉ DE L'ARTICLE, QUANTITÉ & BOUTON AJOUTER PLUSIEURS MONTANTS */}
+            <div className={`p-3.5 rounded-2xl border space-y-3 transition-all ${
+              isLight ? 'retail-card bg-white border-slate-200 shadow-2xs' : 'neon-card bg-[#090c1a] border-cyan-500/25'
+            }`}>
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                {/* Libellé de l'article (span 6) */}
+                <div className="sm:col-span-6 relative">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={`text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${
+                      isLight ? 'text-slate-700' : 'text-cyan-400'
+                    }`}>
+                      <Tag className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Libellé de l'article</span>
+                    </label>
+                    <span className={`text-[10px] ${isLight ? 'text-slate-400' : 'text-neutral-500'}`}>
+                      Personnalisable au clavier
+                    </span>
+                  </div>
+
+                  <input
+                    ref={directLabelInputRef}
+                    type="text"
+                    value={directLabel}
+                    onChange={(e) => setDirectLabel(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (numDirectAmount > 0) {
+                          handleAddDirectItem();
+                        } else {
+                          handleValidateDirectSale();
+                        }
+                      }
+                    }}
+                    placeholder="Saisissez le libellé (ex: Pain, Recharge Télécom, Café...)"
+                    className={`w-full px-3.5 py-2 text-xs font-semibold rounded-xl border transition-all ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:outline-hidden focus:border-amber-500 focus:bg-white shadow-2xs'
+                        : 'bg-neutral-950 border-cyan-500/30 text-white focus:outline-hidden focus:border-cyan-400'
+                    }`}
+                  />
+                </div>
+
+                {/* Quantité de l'article (span 3) */}
+                <div className="sm:col-span-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={`text-[11px] font-bold uppercase tracking-wider ${
+                      isLight ? 'text-slate-700' : 'text-cyan-400'
+                    }`}>
+                      Quantité (Qté)
+                    </label>
+                    <span className="text-[10px] font-mono font-bold opacity-70">
+                      x{directQuantity}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDirectQuantity((q) => Math.max(1, q - 1));
+                        playSoundEffect('beep');
+                      }}
+                      className={`w-9 h-9 rounded-xl font-bold flex items-center justify-center border transition-all cursor-pointer ${
+                        isLight
+                          ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
+                          : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-cyan-500/30'
+                      }`}
+                      title="Diminuer la quantité (-1)"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="number"
+                      min="1"
+                      max="999"
+                      value={directQuantity}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        setDirectQuantity(isNaN(v) || v < 1 ? 1 : v);
+                      }}
+                      className={`w-full h-9 text-center font-mono font-bold text-sm rounded-xl border transition-all ${
+                        isLight
+                          ? 'bg-slate-50 border-slate-300 text-slate-900 focus:outline-hidden focus:border-amber-500 focus:bg-white'
+                          : 'bg-neutral-950 border-cyan-500/30 text-white focus:outline-hidden focus:border-cyan-400'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDirectQuantity((q) => q + 1);
+                        playSoundEffect('beep');
+                      }}
+                      className={`w-9 h-9 rounded-xl font-bold flex items-center justify-center border transition-all cursor-pointer ${
+                        isLight
+                          ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
+                          : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-cyan-500/30'
+                      }`}
+                      title="Augmenter la quantité (+1)"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Bouton pour ajouter un montant supplémentaire au ticket (span 3) */}
+                <div className="sm:col-span-3">
+                  <button
+                    type="button"
+                    onClick={handleAddDirectItem}
+                    disabled={numDirectAmount <= 0}
+                    className={`w-full h-9 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 border transition-all cursor-pointer whitespace-nowrap active:scale-95 shadow-xs ${
+                      numDirectAmount <= 0
+                        ? isLight
+                          ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                          : 'bg-neutral-900 text-neutral-600 border-neutral-800 cursor-not-allowed'
+                        : isLight
+                        ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-amber-500/20'
+                        : 'bg-cyan-500 hover:bg-cyan-400 text-neutral-950 border-cyan-400 shadow-[0_0_15px_rgba(0,242,254,0.4)]'
+                    }`}
+                    title="Ajouter ce montant au ticket pour cumuler plusieurs montants (Touche +)"
+                  >
+                    <Plus className="w-4 h-4 stroke-[3]" />
+                    <span>Ajouter au Ticket [+]</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* QUICK CHIPS SUGGESTIONS & QUANTITY PRESETS */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-dashed border-neutral-700/20">
+                {/* Modèles de libellé */}
+                <div className="flex items-center gap-1.5 overflow-x-auto">
+                  <span className={`text-[10px] font-bold uppercase tracking-wider whitespace-nowrap mr-1 ${
+                    isLight ? 'text-slate-400' : 'text-neutral-500'
+                  }`}>
+                    Modèles :
+                  </span>
+                  {[
+                    'Vente Directe',
+                    'Recharge Télécom',
+                    'Alimentation',
+                    'Boissons',
+                    'Pain & Pâtisserie',
+                    'Snacks & Biscuits',
+                    'Hygiène & Soins',
+                    'Divers',
+                  ].map((label) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => {
+                        setDirectLabel(label);
+                        playSoundEffect('beep');
+                      }}
+                      className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-colors border cursor-pointer ${
+                        directLabel === label
+                          ? isLight
+                            ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
+                            : 'bg-cyan-400 text-neutral-950 font-bold border-cyan-400 shadow-[0_0_10px_rgba(0,242,254,0.5)]'
+                          : isLight
+                          ? 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                          : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Quick quantity shortcuts */}
+                <div className="flex items-center gap-1">
+                  <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                    isLight ? 'text-slate-400' : 'text-neutral-500'
+                  }`}>
+                    Qté:
+                  </span>
+                  {[1, 2, 3, 5, 10, 12].map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => {
+                        setDirectQuantity(q);
+                        playSoundEffect('beep');
+                      }}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold transition-all border cursor-pointer ${
+                        directQuantity === q
+                          ? isLight
+                            ? 'bg-amber-500 text-white border-amber-600'
+                            : 'bg-cyan-400 text-neutral-950 font-bold border-cyan-400 shadow-[0_0_8px_rgba(0,242,254,0.5)]'
+                          : isLight
+                          ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                          : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800'
+                      }`}
+                    >
+                      x{q}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
+
+            {/* INFORMATIONS REÇU : CAISSIÈRE & NOM / NUMÉRO DU CLIENT */}
+            <div className={`p-3.5 rounded-2xl border space-y-2.5 transition-all ${
+              isLight ? 'retail-card bg-white border-slate-200 shadow-2xs' : 'neon-card bg-[#090c1a] border-cyan-500/25'
+            }`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <UserCheck className={`w-4 h-4 ${isLight ? 'text-amber-600' : 'text-cyan-400'}`} />
+                  <span className={`text-xs font-bold uppercase tracking-wider ${
+                    isLight ? 'text-slate-800' : 'text-white'
+                  }`}>
+                    Mentions du Reçu · Caissière & Client
+                  </span>
+                </div>
+
+                {/* Cashier indicator */}
+                <div className={`text-xs flex items-center gap-1.5 font-semibold px-2.5 py-1 rounded-lg border ${
+                  isLight
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30'
+                }`}>
+                  <span className="opacity-75">Caissière :</span>
+                  <span className="font-bold underline">{currentUser.name}</span>
+                </div>
+              </div>
+
+              {/* Customer Inputs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className={`block text-[11px] font-bold uppercase tracking-wider mb-1 ${
+                    isLight ? 'text-slate-600' : 'text-neutral-400'
+                  }`}>
+                    Nom du Client sur le reçu
+                  </label>
+                  <input
+                    type="text"
+                    value={directCustomerName}
+                    onChange={(e) => setDirectCustomerName(e.target.value)}
+                    placeholder="Ex: M. Koffi, Société BTP, Client Comptoir..."
+                    className={`w-full px-3 py-1.5 text-xs font-medium rounded-xl border transition-all ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:outline-hidden focus:border-amber-500 focus:bg-white'
+                        : 'bg-neutral-950 border-cyan-500/30 text-white focus:outline-hidden focus:border-cyan-400'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={`text-[11px] font-bold uppercase tracking-wider ${
+                      isLight ? 'text-slate-600' : 'text-neutral-400'
+                    }`}>
+                      N° Téléphone Client sur le reçu
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomerModal(true)}
+                      className={`text-[10px] font-bold underline cursor-pointer ${
+                        isLight ? 'text-amber-700 hover:text-amber-800' : 'text-cyan-400 hover:text-cyan-300'
+                      }`}
+                      title="Choisir un client enregistré dans le répertoire [F4]"
+                    >
+                      Répertoire client [F4]
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={directCustomerPhone}
+                      onChange={(e) => setDirectCustomerPhone(e.target.value)}
+                      placeholder="Ex: 07 48 92 11 00"
+                      className={`w-full px-3 py-1.5 text-xs font-mono font-medium rounded-xl border transition-all ${
+                        isLight
+                          ? 'bg-slate-50 border-slate-300 text-slate-900 focus:outline-hidden focus:border-amber-500 focus:bg-white'
+                          : 'bg-neutral-950 border-cyan-500/30 text-white focus:outline-hidden focus:border-cyan-400'
+                      }`}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Live receipt badge */}
+              <div className={`p-2 rounded-xl text-[11px] flex flex-wrap items-center justify-between gap-1 border ${
+                isLight ? 'bg-amber-50/70 border-amber-200 text-amber-950' : 'bg-cyan-950/30 border-cyan-500/40 text-cyan-200'
+              }`}>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Receipt className="w-3.5 h-3.5 shrink-0 text-amber-600" />
+                  <span className="truncate">
+                    Figurera sur le reçu : Caissière : <strong>{currentUser.name}</strong> · Client : <strong>{directCustomerName || 'Client Comptoir'}</strong> {directCustomerPhone ? `(Tél: ${directCustomerPhone})` : ''}
+                  </span>
+                </div>
+                {(directCustomerName || directCustomerPhone || selectedCustomerId) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDirectCustomerName('');
+                      setDirectCustomerPhone('');
+                      setSelectedCustomerId('');
+                      playSoundEffect('beep');
+                    }}
+                    className="text-[10px] underline shrink-0 opacity-70 hover:opacity-100 cursor-pointer"
+                  >
+                    Effacer client
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* TICKET MULTI-MONTANTS CUMULÉS (WHEN DIRECT ITEMS EXIST) */}
+            {directItems.length > 0 && (
+              <div className={`p-4 rounded-2xl border space-y-3 transition-all ${
+                isLight
+                  ? 'bg-amber-50/50 border-amber-200 shadow-2xs'
+                  : 'bg-[#0c1024] border-cyan-500/30 shadow-[0_0_15px_rgba(0,242,254,0.06)]'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Receipt className={`w-4 h-4 ${isLight ? 'text-amber-700' : 'text-cyan-400'}`} />
+                    <span className={`text-xs font-extrabold uppercase tracking-wider ${
+                      isLight ? 'text-slate-900' : 'text-white'
+                    }`}>
+                      Ticket en cours ({directItems.length} article{directItems.length > 1 ? 's' : ''})
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold ${
+                      isLight ? 'bg-amber-200 text-amber-950' : 'bg-cyan-950 text-cyan-300 border border-cyan-500/40'
+                    }`}>
+                      Sous-total : {formatMoney(directItemsSum)}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleClearDirectTicket}
+                    className={`text-xs flex items-center gap-1 font-semibold transition-colors cursor-pointer px-2 py-1 rounded hover:bg-rose-500/10 ${
+                      isLight ? 'text-rose-600' : 'text-rose-400'
+                    }`}
+                    title="Vider tous les articles du ticket"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Vider le ticket</span>
+                  </button>
+                </div>
+
+                {/* List of accumulated amounts with quantity steppers */}
+                <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1 divide-y divide-dashed divide-neutral-200 dark:divide-neutral-800">
+                  {directItems.map((item, idx) => (
+                    <div
+                      key={item.id}
+                      className="pt-1.5 first:pt-0 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-mono font-bold shrink-0 ${
+                          isLight ? 'bg-amber-200/80 text-amber-900' : 'bg-cyan-950 text-cyan-300'
+                        }`}>
+                          {idx + 1}
+                        </span>
+                        <span className={`font-semibold truncate ${
+                          isLight ? 'text-slate-800' : 'text-neutral-200'
+                        }`}>
+                          {item.label}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        {/* Inline quantity control in ticket */}
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateDirectItemQuantity(item.id, -1)}
+                            className={`w-5 h-5 rounded flex items-center justify-center border font-bold text-[10px] cursor-pointer ${
+                              isLight ? 'bg-slate-100 hover:bg-slate-200 border-slate-300' : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700'
+                            }`}
+                            title="Diminuer la quantité (-1)"
+                          >
+                            -
+                          </button>
+                          <span className="font-mono font-bold px-1 text-[11px]">
+                            {item.quantity}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateDirectItemQuantity(item.id, 1)}
+                            className={`w-5 h-5 rounded flex items-center justify-center border font-bold text-[10px] cursor-pointer ${
+                              isLight ? 'bg-slate-100 hover:bg-slate-200 border-slate-300' : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700'
+                            }`}
+                            title="Augmenter la quantité (+1)"
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        <span className={`font-mono font-bold ${
+                          isLight ? 'text-slate-900' : 'text-cyan-300'
+                        }`}>
+                          {formatMoney(item.amount * item.quantity)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveDirectItem(item.id)}
+                          className="p-1 rounded hover:bg-rose-500/20 text-rose-500 transition-colors cursor-pointer"
+                          title="Supprimer cette ligne"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* TACTILE NUMPAD (Large touchable buttons) */}
             <div className="grid grid-cols-4 gap-2.5">
@@ -743,8 +1319,9 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 { label: '2', val: '2' },
                 { label: '3', val: '3' },
                 { label: '00', val: '00' },
-                { label: '0', val: '0', colSpan: 'col-span-2' },
-                { label: 'Appoint [Espace]', val: 'exact', isExact: true, colSpan: 'col-span-2' },
+                { label: '0', val: '0' },
+                { label: '+ Ajouter [Touche +]', val: 'add_item', isAdd: true, colSpan: 'col-span-2' },
+                { label: 'Appoint [Espace]', val: 'exact', isExact: true, colSpan: 'col-span-1' },
               ].map((btn, idx) => {
                 if (btn.isExact) {
                   return (
@@ -752,16 +1329,36 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                       key={idx}
                       type="button"
                       onClick={() => {
-                        setDirectCashReceived(String(numDirectAmount));
+                        setDirectCashReceived(String(totalDirectToPay));
                         playSoundEffect('beep');
                       }}
-                      className={`${btn.colSpan || ''} py-3.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 border transition-all cursor-pointer active:scale-95 ${
+                      className={`${btn.colSpan || ''} py-3 px-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1 border transition-all cursor-pointer active:scale-95 ${
                         isLight
                           ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'
                           : 'bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-300 border-cyan-500/40'
                       }`}
+                      title="Saisir automatiquement le montant exact [Espace]"
                     >
-                      <span>Appoint Exact [Espace]</span>
+                      <span>Appoint</span>
+                    </button>
+                  );
+                }
+
+                if (btn.isAdd) {
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleAddDirectItem()}
+                      className={`${btn.colSpan || ''} py-3 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 border transition-all cursor-pointer active:scale-95 ${
+                        isLight
+                          ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-xs'
+                          : 'bg-cyan-500 hover:bg-cyan-400 text-neutral-950 font-bold border-cyan-400 shadow-[0_0_15px_rgba(0,242,254,0.4)]'
+                      }`}
+                      title="Ajouter ce montant au ticket en cours (Touche +)"
+                    >
+                      <Plus className="w-4 h-4 stroke-[3]" />
+                      <span>Ajouter Montant [+]</span>
                     </button>
                   );
                 }
@@ -771,7 +1368,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                     key={idx}
                     type="button"
                     onClick={() => handleDirectNumpadPress(btn.val)}
-                    className={`${btn.colSpan || ''} py-4 rounded-xl font-mono text-xl md:text-2xl font-bold flex items-center justify-center border transition-all cursor-pointer active:scale-95 ${
+                    className={`${btn.colSpan || ''} py-3.5 rounded-xl font-mono text-xl md:text-2xl font-bold flex items-center justify-center border transition-all cursor-pointer active:scale-95 ${
                       btn.isDanger
                         ? isLight
                           ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300'
@@ -875,7 +1472,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                     type="number"
                     value={directCashReceived}
                     onChange={(e) => setDirectCashReceived(e.target.value)}
-                    placeholder={String(numDirectAmount || 0)}
+                    placeholder={String(totalDirectToPay || 0)}
                     className={`w-32 px-3 py-1.5 rounded-lg font-mono text-sm font-bold transition-colors ${
                       isLight
                         ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-amber-500'
@@ -926,9 +1523,9 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
             <button
               type="button"
               onClick={handleValidateDirectSale}
-              disabled={numDirectAmount <= 0 || isProcessing}
+              disabled={totalDirectToPay <= 0 || isProcessing}
               className={`w-full py-4 px-6 rounded-2xl font-black text-base flex items-center justify-center gap-3 transition-all cursor-pointer shadow-lg active:scale-[0.99] ${
-                numDirectAmount <= 0
+                totalDirectToPay <= 0
                   ? isLight
                     ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
                     : 'bg-neutral-900 text-neutral-600 cursor-not-allowed border border-neutral-800'
@@ -938,9 +1535,9 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               }`}
             >
               <Check className="w-6 h-6 stroke-[3]" />
-              <span>ENCAISSER & VALIDER [Entrée ↵]</span>
+              <span>ENCAISSER & VALIDER LE TICKET [Entrée ↵]</span>
               <span className="text-sm font-mono opacity-80">
-                ({formatMoney(numDirectAmount)})
+                ({formatMoney(totalDirectToPay)} · {totalDirectItemsCount} art.)
               </span>
             </button>
           </div>
@@ -1000,7 +1597,9 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                         <p className={`text-[11px] truncate max-w-[150px] ${
                           isLight ? 'text-slate-500' : 'text-neutral-400'
                         }`}>
-                          {tx.items[0]?.productName || 'Vente'}
+                          {tx.items.length > 1
+                            ? `${tx.items[0]?.productName} (+${tx.items.length - 1} art.)`
+                            : (tx.items[0]?.productName || 'Vente')}
                         </p>
                       </div>
 
@@ -1029,11 +1628,11 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 <span>Commandes clavier directes :</span>
               </div>
               <ul className="space-y-1 opacity-90 pl-1">
-                <li>• <kbd className="font-mono font-bold">Chiffres</kbd> : taper montant</li>
-                <li>• <kbd className="font-mono font-bold">Entrée</kbd> : valider encaissement</li>
+                <li>• <kbd className="font-mono font-bold">Chiffres</kbd> : taper le montant</li>
+                <li>• <kbd className="font-mono font-bold">+</kbd> : cumuler plusieurs montants</li>
+                <li>• <kbd className="font-mono font-bold">Entrée</kbd> : valider le ticket</li>
                 <li>• <kbd className="font-mono font-bold">Espace</kbd> : appoint exact</li>
                 <li>• <kbd className="font-mono font-bold">F12</kbd> : imprimer ticket thermique</li>
-                <li>• <kbd className="font-mono font-bold">F5</kbd> : mode catalogue & articles</li>
               </ul>
             </div>
           </div>
@@ -1447,10 +2046,12 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               <button
                 onClick={() => {
                   setSelectedCustomerId('');
+                  setDirectCustomerName('');
+                  setDirectCustomerPhone('');
                   setShowCustomerModal(false);
                 }}
                 className={`w-full text-left p-2.5 rounded-lg border text-xs transition-colors ${
-                  selectedCustomerId === ''
+                  selectedCustomerId === '' && !directCustomerName
                     ? isLight
                       ? 'border-amber-500 bg-amber-50 font-bold text-amber-900'
                       : 'border-cyan-400 bg-cyan-950/40 font-bold text-cyan-300'
@@ -1467,6 +2068,8 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   key={c.id}
                   onClick={() => {
                     setSelectedCustomerId(c.id);
+                    setDirectCustomerName(c.name);
+                    setDirectCustomerPhone(c.phone);
                     setShowCustomerModal(false);
                   }}
                   className={`w-full text-left p-2.5 rounded-lg border text-xs transition-colors flex justify-between items-center ${

@@ -137,8 +137,12 @@ export function setupFirestoreListeners(callbacks: {
           }
         },
         (error) => {
-          console.warn(`[Firebase] Listener on ${name} error:`, error.message);
-          updateSyncState({ error: error.message });
+          if (error?.code === 'unavailable') {
+            updateSyncState({ isOnline: false, isFirebaseActive: false });
+          } else {
+            console.warn(`[Firebase] Listener on ${name} notice:`, error.message);
+            updateSyncState({ error: error.message });
+          }
         }
       );
       unsubscribers.push(unsub);
@@ -216,7 +220,9 @@ export async function seedRemoteFirestoreIfEmpty(dataMap: {
       error: null,
     });
   } catch (err: any) {
-    console.warn('[FirebaseSync] Seed batch notice:', err?.message || err);
+    if (err?.code !== 'unavailable') {
+      console.warn('[FirebaseSync] Seed batch notice:', err?.message || err);
+    }
     updateSyncState({ syncInProgress: false });
   }
 }
