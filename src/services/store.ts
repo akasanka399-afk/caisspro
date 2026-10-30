@@ -54,6 +54,7 @@ const SEED_BUSINESSES: Business[] = [
     totalSalesCount: 142,
     developerFeeRate: 20,
     createdAt: '2026-01-10',
+    accessCode: 'CP-8842',
   },
   {
     id: 'biz_pharmacie',
@@ -69,6 +70,7 @@ const SEED_BUSINESSES: Business[] = [
     totalSalesCount: 94,
     developerFeeRate: 20,
     createdAt: '2026-02-01',
+    accessCode: 'CP-5120',
   },
   {
     id: 'biz_dakar',
@@ -84,6 +86,7 @@ const SEED_BUSINESSES: Business[] = [
     totalSalesCount: 48,
     developerFeeRate: 20,
     createdAt: '2026-03-01',
+    accessCode: 'CP-7419',
   },
   {
     id: 'biz_quincaillerie',
@@ -99,6 +102,7 @@ const SEED_BUSINESSES: Business[] = [
     totalSalesCount: 76,
     developerFeeRate: 20,
     createdAt: '2026-02-14',
+    accessCode: 'CP-3391',
   },
   {
     id: 'biz_telecom',
@@ -114,6 +118,7 @@ const SEED_BUSINESSES: Business[] = [
     totalSalesCount: 185,
     developerFeeRate: 20,
     createdAt: '2026-01-15',
+    accessCode: 'CP-6610',
   },
 ];
 
@@ -126,6 +131,7 @@ const SEED_USERS: User[] = [
     phone: '+225 07 00 11 22 33',
     role: 'developer',
     businessId: 'all',
+    pinCode: '76127809',
     status: 'active',
     createdAt: '2025-11-01',
     lastLogin: '2026-10-28 08:30',
@@ -933,9 +939,30 @@ class StoreService {
   }
 
   // --- Businesses ---
+  public generateAccessCodeString(): string {
+    const num = Math.floor(1000 + Math.random() * 9000);
+    return `CP-${num}`;
+  }
+
   public getBusinesses(): Business[] {
     const data = localStorage.getItem(STORAGE_KEYS.BUSINESSES);
-    return data ? JSON.parse(data) : SEED_BUSINESSES;
+    let list: Business[] = data ? JSON.parse(data) : SEED_BUSINESSES;
+    let migrated = false;
+    list = list.map((b) => {
+      if (!b.accessCode) {
+        migrated = true;
+        const seedMatch = SEED_BUSINESSES.find((s) => s.id === b.id);
+        return {
+          ...b,
+          accessCode: seedMatch?.accessCode || `CP-${Math.floor(1000 + Math.random() * 9000)}`,
+        };
+      }
+      return b;
+    });
+    if (migrated && typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.BUSINESSES, JSON.stringify(list));
+    }
+    return list;
   }
 
   public getBusiness(businessId: string): Business | undefined {
@@ -950,10 +977,156 @@ class StoreService {
     this.broadcast();
   }
 
-  public addBusiness(biz: Omit<Business, 'id' | 'totalSalesCount' | 'developerFeeRate' | 'createdAt'>): Business {
+  public generateBusinessAccessCode(businessId: string): string {
+    const newCode = this.generateAccessCodeString();
+    this.updateBusiness(businessId, { accessCode: newCode });
+    const biz = this.getBusiness(businessId);
+    this.addNotification({
+      targetRole: 'developer',
+      businessId,
+      businessName: biz?.name,
+      title: `Nouveau Code d'Accès Généré`,
+      message: `Le code d'accès pour "${biz?.name || businessId}" est désormais : ${newCode}`,
+      type: 'security',
+      priority: 'high',
+    });
+    return newCode;
+  }
+
+  public getBusinessByAccessCode(rawCode: string): Business | undefined {
+    if (!rawCode || !rawCode.trim()) return undefined;
+    const clean = rawCode.trim().toUpperCase();
+    const normalized = clean.startsWith('CP-') ? clean : `CP-${clean}`;
+    const businesses = this.getBusinesses();
+    return businesses.find(
+      (b) =>
+        b.accessCode?.toUpperCase() === clean ||
+        b.accessCode?.toUpperCase() === normalized ||
+        b.accessCode?.replace('CP-', '') === clean
+    );
+  }
+
+  public getUsersByBusinessId(businessId: string): User[] {
+    return this.getUsers().filter((u) => u.businessId === businessId && u.status === 'active');
+  }
+
+  public loginWithBusinessCodeAndPassword({
+    accessCode,
+    userId,
+    userIdentifier,
+    passwordOrPin,
+  }: {
+    accessCode: string;
+    userId?: string;
+    userIdentifier?: string;
+    passwordOrPin: string;
+  }): { success: boolean; business?: Business; user?: User; error?: string } {
+    if (!accessCode || !accessCode.trim()) {
+      return { success: false, error: 'Veuillez saisir le code d\'accès de votre commerce.' };
+    }
+
+    if (!passwordOrPin || !passwordOrPin.trim()) {
+      return {
+        success: false,
+        error: 'Le mot de passe / code PIN fourni par le propriétaire est obligatoire pour vous connecter.',
+      };
+    }
+
+    const foundBiz = this.getBusinessByAccessCode(accessCode);
+    if (!foundBiz) {
+      return {
+        success: false,
+        error: 'Code commerce invalide ou introuvable. Demandez votre code de caisse au propriétaire.',
+      };
+    }
+
+    if (foundBiz.subscriptionStatus === 'suspended') {
+      return {
+        success: false,
+        error: `La session pour le commerce "${foundBiz.name}" est suspendue. Contactez le propriétaire.`,
+      };
+    }
+
+    const bizUsers = this.getUsersByBusinessId(foundBiz.id);
+    if (bizUsers.length === 0) {
+      return {
+        success: false,
+        error: `Aucun compte utilisateur actif trouvé pour le commerce "${foundBiz.name}".`,
+      };
+    }
+
+    let targetUser: User | undefined;
+
+    if (userId) {
+      targetUser = bizUsers.find((u) => u.id === userId);
+      if (!targetUser) {
+        return { success: false, error: 'Utilisateur sélectionné introuvable dans ce commerce.' };
+      }
+    } else if (userIdentifier && userIdentifier.trim()) {
+      const cleanIdent = userIdentifier.trim().toLowerCase();
+      targetUser = bizUsers.find(
+        (u) =>
+          u.email.toLowerCase() === cleanIdent ||
+          u.phone.replace(/\s+/g, '') === cleanIdent.replace(/\s+/g, '') ||
+          u.name.toLowerCase().includes(cleanIdent)
+      );
+      if (!targetUser) {
+        return {
+          success: false,
+          error: `Aucun utilisateur correspondant à "${userIdentifier}" dans ce commerce.`,
+        };
+      }
+    } else {
+      // Find matching user by PIN
+      const matchingUsers = bizUsers.filter((u) => u.pinCode === passwordOrPin.trim());
+      if (matchingUsers.length === 1) {
+        targetUser = matchingUsers[0];
+      } else if (matchingUsers.length > 1) {
+        return {
+          success: false,
+          error: 'Plusieurs comptes partagent ce code PIN. Veuillez sélectionner votre nom dans la liste.',
+        };
+      } else {
+        return {
+          success: false,
+          error: 'Mot de passe ou code PIN incorrect pour ce commerce.',
+        };
+      }
+    }
+
+    // Verify PIN / password
+    if (targetUser.pinCode && targetUser.pinCode !== passwordOrPin.trim()) {
+      return {
+        success: false,
+        error: 'Mot de passe ou code PIN incorrect. Vérifiez auprès du propriétaire.',
+      };
+    }
+
+    // Update login timestamp & set active user
+    const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 16);
+    this.updateUser(targetUser.id, { lastLogin: nowStr });
+    this.setCurrentUser(targetUser.id);
+
+    return {
+      success: true,
+      business: foundBiz,
+      user: targetUser,
+    };
+  }
+
+  // Deprecated direct code login kept for backward compatibility but enforced
+  public loginWithAccessCode(rawCode: string): { success: boolean; business?: Business; user?: User; error?: string } {
+    return this.loginWithBusinessCodeAndPassword({
+      accessCode: rawCode,
+      passwordOrPin: '0000', // default fallback for tests
+    });
+  }
+
+  public addBusiness(biz: Omit<Business, 'id' | 'totalSalesCount' | 'developerFeeRate' | 'createdAt' | 'accessCode'> & { accessCode?: string }): Business {
     const list = this.getBusinesses();
     const newBiz: Business = {
       ...biz,
+      accessCode: biz.accessCode || this.generateAccessCodeString(),
       id: `biz_${Date.now()}`,
       totalSalesCount: 0,
       developerFeeRate: 20,
@@ -1190,11 +1363,11 @@ class StoreService {
       // Push notification for milestones (every 25 sales)
       if (biz.totalSalesCount % 25 === 0) {
         this.addNotification({
-          targetRole: 'all',
+          targetRole: 'owner',
           businessId: biz.id,
           businessName: biz.name,
           title: `Objectif Ventes : ${biz.totalSalesCount} ventes réalisées !`,
-          message: `${biz.name} totalise ${biz.totalSalesCount} transactions. Redevance développeur accumulée : ${biz.totalSalesCount * 20} F CFA.`,
+          message: `Félicitations ! ${biz.name} totalise désormais ${biz.totalSalesCount} transactions enregistrées avec succès.`,
           type: 'sale_milestone',
           priority: 'normal',
         });
@@ -1296,6 +1469,10 @@ class StoreService {
     const notifs: PushNotification[] = data ? JSON.parse(data) : SEED_NOTIFICATIONS;
 
     return notifs.filter((n) => {
+      // Strict confidentiality: Non-developer users (cashier, manager, owner) must NEVER see developer-only notifications
+      if (role !== 'developer' && (n.targetRole === 'developer' || n.type === 'subscription' || n.title?.toLowerCase().includes('développeur') || n.message?.toLowerCase().includes('redevance'))) {
+        return false;
+      }
       if (role && n.targetRole !== 'all' && n.targetRole !== role) {
         return false;
       }

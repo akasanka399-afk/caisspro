@@ -78,9 +78,8 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
   const monthlyTransactions = transactions.filter((t) => t.timestamp.startsWith(currentMonthStr));
   const monthlyRevenue = monthlyTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
 
-  // Developer Fee Counter (20 F per sale)
+  // Sales counter & stats
   const totalSalesCount = business.totalSalesCount || transactions.length;
-  const developerFeeCalculated = totalSalesCount * business.developerFeeRate; // 20 F per sale
 
   // Average basket
   const avgBasket = transactions.length > 0 ? Math.round(monthlyRevenue / (monthlyTransactions.length || 1)) : 0;
@@ -160,7 +159,7 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
         </button>
       </div>
 
-      {/* THE SPECIAL 20F/SALE COMMISSION COUNTER CARD (Prompt requirement) */}
+      {/* SYNTHÈSE D'ACTIVITÉ & PERFORMANCE COMMERCIALE DU COMMERCE */}
       <div className={`p-5 md:p-6 rounded-2xl relative overflow-hidden transition-all ${
         isLight
           ? 'bg-gradient-to-br from-amber-50 via-white to-orange-50 border-2 border-amber-300 shadow-sm'
@@ -174,19 +173,17 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
                   ? 'bg-amber-100 text-amber-800 border-amber-300'
                   : 'bg-cyan-400/20 text-cyan-300 border-cyan-400/40 shadow-[0_0_8px_rgba(0,242,254,0.3)]'
               }`}>
-                Compteur Tarif Vente Caisse Pro
+                Activité Commerciale Magasin
               </span>
               <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
-                · Barème fixe : 20 F CFA / vente
+                · Données confidentielles propriétaire
               </span>
             </div>
             <h2 className="text-lg md:text-xl font-bold">
-              Redevance d'Usage & Synchronisation Développeur
+              Synthèse d'Activité & Encaissements de votre Établissement
             </h2>
             <p className={`text-xs max-w-2xl leading-relaxed ${isLight ? 'text-slate-600' : 'text-neutral-300'}`}>
-              Ce compteur suit en temps réel le volume total de ventes effectuées dans votre établissement.
-              Chaque ticket généré est facturé au tarif conventionnel de <span className={`font-bold ${isLight ? 'text-amber-700' : 'text-cyan-400'}`}>20 F CFA</span> pour
-              l'hébergement cloud, la synchronisation temps réel et la maintenance applicative.
+              Suivi en temps réel de votre chiffre d'affaires, du volume de tickets émis par vos caissiers et du panier moyen de vos clients. Toutes vos opérations sont enregistrées et synchronisées de manière sécurisée.
             </p>
           </div>
 
@@ -198,32 +195,32 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
           }`}>
             <div>
               <span className={`text-[11px] block font-medium ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
-                Ventes Enregistrées
+                Total Ventes Réalisées
               </span>
               <span className="text-2xl md:text-3xl font-extrabold font-mono tabular-nums">
                 {totalSalesCount}
               </span>
               <span className={`text-[10px] block ${isLight ? 'text-slate-400' : 'text-neutral-500'}`}>
-                transactions réseau
+                tickets enregistrés
               </span>
             </div>
 
             <div className={`w-px h-10 ${isLight ? 'bg-slate-200' : 'bg-neutral-800'}`} />
 
             <div>
-              <span className={`text-[11px] block font-semibold ${isLight ? 'text-amber-700' : 'text-cyan-300'}`}>
-                Montant Redevance (× 20 F)
+              <span className={`text-[11px] block font-semibold ${isLight ? 'text-emerald-700' : 'text-emerald-300'}`}>
+                Chiffre d'Affaires Mensuel
               </span>
               <span className={`text-2xl md:text-3xl font-extrabold font-mono tabular-nums ${
-                isLight ? 'text-amber-600' : 'text-cyan-300 neon-text-cyan'
+                isLight ? 'text-emerald-600' : 'text-emerald-300 neon-text-green'
               }`}>
-                {formatMoney(developerFeeCalculated)}
+                {formatMoney(monthlyRevenue)}
               </span>
               <span className={`text-[10px] block flex items-center gap-1 font-medium ${
                 isLight ? 'text-emerald-700' : 'text-emerald-400'
               }`}>
                 <CheckCircle className="w-3 h-3" />
-                <span>Compteur à jour en direct</span>
+                <span>Panier moyen : {formatMoney(avgBasket)}</span>
               </span>
             </div>
           </div>
@@ -497,7 +494,7 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
                 <th className="px-4 py-2.5 font-semibold">Caissier</th>
                 <th className="px-4 py-2.5 font-semibold">Client</th>
                 <th className="px-4 py-2.5 font-semibold">Règlement</th>
-                <th className="px-4 py-2.5 font-semibold text-right">Redevance (20 F)</th>
+                <th className="px-4 py-2.5 font-semibold text-center">Articles</th>
                 <th className="px-4 py-2.5 font-semibold text-right">Montant Total</th>
                 <th className="px-4 py-2.5 font-semibold text-center">Ticket</th>
               </tr>
@@ -530,10 +527,10 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
                         : 'Crédit'}
                     </span>
                   </td>
-                  <td className={`px-4 py-2.5 text-right font-mono font-bold ${
-                    isLight ? 'text-amber-700' : 'text-cyan-400'
+                  <td className={`px-4 py-2.5 text-center font-mono font-bold ${
+                    isLight ? 'text-slate-700' : 'text-neutral-300'
                   }`}>
-                    20 F
+                    {tx.items.reduce((s, it) => s + it.quantity, 0)} art.
                   </td>
                   <td className={`px-4 py-2.5 text-right font-mono font-bold ${
                     isLight ? 'text-emerald-700' : 'text-emerald-400'

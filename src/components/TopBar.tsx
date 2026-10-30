@@ -15,8 +15,13 @@ import {
   AlertCircle,
   Cloud,
   Menu,
+  Wifi,
+  WifiOff,
+  Maximize,
+  Minimize,
 } from 'lucide-react';
 import { subscribeSyncState, CloudSyncState } from '../services/firebaseSync';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface TopBarProps {
   currentUser: User;
@@ -63,6 +68,106 @@ export const TopBar: React.FC<TopBarProps> = ({
     syncInProgress: false,
     error: null,
   });
+
+  const [isBrowserOnline, setIsBrowserOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+
+  useEffect(() => {
+    const handleOnline = () => setIsBrowserOnline(true);
+    const handleOffline = () => setIsBrowserOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  useEffect(() => {
+    const checkFullscreen = () => {
+      const doc = document as unknown as {
+        fullscreenElement?: Element;
+        webkitFullscreenElement?: Element;
+        mozFullScreenElement?: Element;
+        msFullscreenElement?: Element;
+      };
+      const isFs = Boolean(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+      setIsFullscreen(isFs);
+    };
+
+    document.addEventListener('fullscreenchange', checkFullscreen);
+    document.addEventListener('webkitfullscreenchange', checkFullscreen);
+    document.addEventListener('mozfullscreenchange', checkFullscreen);
+    document.addEventListener('MSFullscreenChange', checkFullscreen);
+    return () => {
+      document.removeEventListener('fullscreenchange', checkFullscreen);
+      document.removeEventListener('webkitfullscreenchange', checkFullscreen);
+      document.removeEventListener('mozfullscreenchange', checkFullscreen);
+      document.removeEventListener('MSFullscreenChange', checkFullscreen);
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      const doc = document as unknown as {
+        fullscreenElement?: Element;
+        webkitFullscreenElement?: Element;
+        mozFullScreenElement?: Element;
+        msFullscreenElement?: Element;
+        exitFullscreen?: () => Promise<void>;
+        webkitExitFullscreen?: () => Promise<void>;
+        mozCancelFullScreen?: () => Promise<void>;
+        msExitFullscreen?: () => Promise<void>;
+      };
+
+      const docEl = document.documentElement as unknown as {
+        requestFullscreen?: () => Promise<void>;
+        webkitRequestFullscreen?: () => Promise<void>;
+        mozRequestFullScreen?: () => Promise<void>;
+        msRequestFullscreen?: () => Promise<void>;
+      };
+
+      const isFs = Boolean(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+
+      if (!isFs) {
+        if (docEl.requestFullscreen) {
+          await docEl.requestFullscreen();
+        } else if (docEl.webkitRequestFullscreen) {
+          await docEl.webkitRequestFullscreen();
+        } else if (docEl.mozRequestFullScreen) {
+          await docEl.mozRequestFullScreen();
+        } else if (docEl.msRequestFullscreen) {
+          await docEl.msRequestFullscreen();
+        }
+      } else {
+        if (doc.exitFullscreen) {
+          await doc.exitFullscreen();
+        } else if (doc.webkitExitFullscreen) {
+          await doc.webkitExitFullscreen();
+        } else if (doc.mozCancelFullScreen) {
+          await doc.mozCancelFullScreen();
+        } else if (doc.msExitFullscreen) {
+          await doc.msExitFullscreen();
+        }
+      }
+      playSoundEffect('beep');
+    } catch (e) {
+      console.warn('Plein écran non disponible ou restreint par le navigateur:', e);
+    }
+  };
 
   useEffect(() => {
     return subscribeSyncState((state) => setCloudSync(state));
@@ -137,6 +242,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       setShowSecretPinModal(false);
       setSecretPinInput('');
       setSecretPinError('');
+      store.setCurrentUser('usr_dev');
       onNavigate('dev-dashboard');
     } else {
       playSoundEffect('error');
@@ -179,8 +285,8 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         {currentUser.role !== 'developer' && (
           <span
-            className={`hidden sm:inline text-xs truncate max-w-[190px] font-medium border-l pl-3 ${
-              isLight ? 'border-slate-200 text-slate-500' : 'border-cyan-500/20 text-neutral-400'
+            className={`hidden sm:inline text-xs truncate max-w-[200px] font-semibold border-l pl-3 ${
+              isLight ? 'border-slate-200 text-slate-700' : 'border-neutral-700 text-neutral-300'
             }`}
           >
             {currentBusiness.name}
@@ -235,29 +341,42 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
       </nav>
 
-      {/* Zone 3: Primary action + Theme Switcher (Clair / Néon) + profile */}
-      <div className="flex items-center gap-3 shrink-0">
-        {/* Firebase Cloud Sync Live Badge */}
-        <div
-          className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-colors ${
-            cloudSync.isOnline
-              ? isLight
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                : 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.15)]'
-              : isLight
-              ? 'bg-amber-50 border-amber-200 text-amber-800'
-              : 'bg-amber-950/40 border-amber-500/30 text-amber-300'
-          }`}
-          title="Synchronisation temps réel Firebase Cloud Firestore (europe-west2) active"
-        >
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              cloudSync.isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+      {/* Zone 3: Primary action + PWA Install + Theme Switcher (Clair / Néon) + profile */}
+      <div className="flex items-center gap-2.5 shrink-0">
+        {/* PWA Install Button */}
+        <PWAInstallButton />
+
+        {/* Network & Cloud Sync Live Badge */}
+        {!isBrowserOnline ? (
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-xs animate-pulse"
+            title="Mode Hors-ligne actif : l'application fonctionne sans connexion Internet. Vos encaissements et sessions sont enregistrés localement."
+          >
+            <WifiOff className="w-3.5 h-3.5 text-rose-400" />
+            <span className="whitespace-nowrap">Hors-ligne (Actif)</span>
+          </div>
+        ) : (
+          <div
+            className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-colors ${
+              cloudSync.isOnline
+                ? isLight
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.15)]'
+                : isLight
+                ? 'bg-amber-50 border-amber-200 text-amber-800'
+                : 'bg-amber-950/40 border-amber-500/30 text-amber-300'
             }`}
-          />
-          <Cloud className={`w-3.5 h-3.5 ${cloudSync.isOnline ? 'text-emerald-500' : 'text-amber-500'}`} />
-          <span className="font-semibold whitespace-nowrap">Firebase Cloud Sync</span>
-        </div>
+            title="Synchronisation temps réel Firebase Cloud Firestore (europe-west2) active"
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                cloudSync.isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+              }`}
+            />
+            <Cloud className={`w-3.5 h-3.5 ${cloudSync.isOnline ? 'text-emerald-500' : 'text-amber-500'}`} />
+            <span className="font-semibold whitespace-nowrap">Cloud Sync</span>
+          </div>
+        )}
 
         {/* MODE CLAIR / MODE NÉON SWITCHER */}
         <div
@@ -293,6 +412,32 @@ export const TopBar: React.FC<TopBarProps> = ({
             <span className="hidden sm:inline">Néon</span>
           </button>
         </div>
+
+        {/* FULLSCREEN MODE TOGGLE (FULL SCREEN API) */}
+        <button
+          onClick={toggleFullscreen}
+          className={`p-2 rounded-lg border transition-all flex items-center justify-center cursor-pointer ${
+            isFullscreen
+              ? isLight
+                ? 'bg-amber-100 border-amber-300 text-amber-900 shadow-xs ring-1 ring-amber-400/40'
+                : 'bg-cyan-950/60 border-cyan-400 text-cyan-300 shadow-[0_0_12px_rgba(0,242,254,0.4)] ring-1 ring-cyan-400/50'
+              : isLight
+              ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200 hover:text-slate-900'
+              : 'bg-[#0b0e1b] border-cyan-500/30 text-neutral-300 hover:text-white hover:border-cyan-400/50'
+          }`}
+          title={
+            isFullscreen
+              ? 'Quitter le plein écran (Échap)'
+              : 'Passer en plein écran (Optimiser l\'affichage pour la caissière)'
+          }
+          aria-label={isFullscreen ? 'Quitter le plein écran' : 'Passer en plein écran'}
+        >
+          {isFullscreen ? (
+            <Minimize className="w-4 h-4" />
+          ) : (
+            <Maximize className="w-4 h-4" />
+          )}
+        </button>
 
         {/* Notifications Icon with Counter */}
         <div className="relative">
@@ -523,6 +668,24 @@ export const TopBar: React.FC<TopBarProps> = ({
           </button>
         );
       })}
+
+      {/* Mobile Fullscreen Toggle Button */}
+      <button
+        onClick={toggleFullscreen}
+        className={`ml-auto px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-all ${
+          isFullscreen
+            ? isLight
+              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+              : 'bg-cyan-500/20 text-cyan-300 border border-cyan-400'
+            : isLight
+            ? 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+            : 'bg-neutral-900 text-neutral-400 border border-neutral-800 hover:text-white'
+        }`}
+        title={isFullscreen ? 'Quitter le mode plein écran' : 'Passer en plein écran'}
+      >
+        {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
+        <span className="text-[11px] font-bold">Plein Écran</span>
+      </button>
     </div>
   </div>
   );

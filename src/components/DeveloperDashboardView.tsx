@@ -22,6 +22,11 @@ import {
   ExternalLink,
   DollarSign,
   TrendingUp,
+  Copy,
+  Check,
+  Key,
+  QrCode,
+  WifiOff,
 } from 'lucide-react';
 
 interface DeveloperDashboardViewProps {
@@ -141,7 +146,7 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
     const expDate = new Date();
     expDate.setMonth(expDate.getMonth() + 12);
 
-    store.addBusiness({
+    const newCreatedBiz = store.addBusiness({
       name: newBizName.trim(),
       tradeType: newBizTrade,
       currency: 'FCFA',
@@ -155,7 +160,8 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
 
     setShowAddBizModal(false);
     setNewBizName('');
-    alert(`Nouveau commerce "${newBizName}" enregistré.`);
+    playSoundEffect('cash');
+    alert(`Nouveau commerce "${newCreatedBiz.name}" enregistré avec succès !\n\nCode d'accès session généré : ${newCreatedBiz.accessCode}\nTransmettez ce code au caissier pour sa connexion en ligne ou hors-ligne.`);
   };
 
   // Send Broadcast Push Notification
@@ -180,6 +186,25 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
     setBroadcastTitle('');
     setBroadcastMessage('');
     alert('Notification push diffusée avec succès sur le réseau !');
+  };
+
+  const [copiedBizId, setCopiedBizId] = useState<string | null>(null);
+
+  const handleCopyCode = (code: string, bizId: string) => {
+    navigator.clipboard?.writeText(code);
+    setCopiedBizId(bizId);
+    playSoundEffect('beep');
+    setTimeout(() => setCopiedBizId(null), 2500);
+  };
+
+  const handleRegenerateCode = (b: Business) => {
+    const confirmRegen = window.confirm(
+      `Voulez-vous vraiment générer un NOUVEAU code d'accès pour "${b.name}" ? L'ancien code sera immédiatement révoqué.`
+    );
+    if (!confirmRegen) return;
+    const newCode = store.generateBusinessAccessCode(b.id);
+    playSoundEffect('cash');
+    alert(`Nouveau code généré pour "${b.name}" : ${newCode}\nCe code est immédiatement utilisable par le caissier en ligne ou hors-ligne.`);
   };
 
   // If locked
@@ -590,130 +615,196 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
 
       {/* TAB 2: BUSINESSES & SUBSCRIPTIONS */}
       {activeTab === 'businesses' && (
-        <div className={`rounded-xl overflow-hidden border ${
-          isLight
-            ? 'retail-card bg-white border-slate-200 shadow-xs'
-            : 'neon-card bg-neutral-900 border-neutral-800'
-        }`}>
-          <div className={`p-4 border-b flex items-center justify-between ${
-            isLight ? 'bg-slate-50 border-slate-200' : 'bg-neutral-950 border-neutral-800'
+        <div className="space-y-4">
+          {/* Super Admin Access Code Guide Card */}
+          <div className={`p-4 rounded-xl border flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
+            isLight
+              ? 'bg-amber-50/80 border-amber-200 text-slate-800'
+              : 'bg-amber-950/20 border-amber-500/30 text-amber-100'
           }`}>
-            <h3 className={`text-xs font-bold uppercase tracking-wider ${
-              isLight ? 'text-slate-900' : 'text-white'
-            }`}>
-              Commerces Partenaires & Gestion des Abonnements
-            </h3>
-            <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
-              {businesses.length} établissements
-            </span>
+            <div className="flex items-start gap-3">
+              <div className={`p-2.5 rounded-lg shrink-0 ${
+                isLight ? 'bg-amber-100 text-amber-800' : 'bg-amber-500/20 text-amber-300'
+              }`}>
+                <Key className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold flex items-center gap-2">
+                  <span>Connexion par Code Unique & Accès Hors-Ligne (PWA)</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase ${
+                    isLight ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-emerald-950/50 text-emerald-300 border-emerald-700'
+                  }`}>
+                    100% Fonctionnel Hors-ligne
+                  </span>
+                </h4>
+                <p className={`text-xs leading-relaxed max-w-3xl ${isLight ? 'text-slate-600' : 'text-neutral-300'}`}>
+                  Chaque commerce se connecte à sa session de caisse en tapant son code unique généré ci-dessous (ex : <span className="font-mono font-bold">CP-8842</span>). Ce code permet au caissier d'ouvrir et d'utiliser sa caisse <strong>même en cas de coupure Internet</strong> grâce au cache local PWA. Vous pouvez regénérer un code à tout moment si le commerçant a égaré ses accès.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowAddBizModal(true)}
+              className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shrink-0 shadow-sm transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Nouveau Commerce</span>
+            </button>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className={`border-b ${
-                isLight ? 'bg-slate-100/70 border-slate-200 text-slate-700' : 'bg-neutral-950/80 border-neutral-800 text-neutral-400'
+          <div className={`rounded-xl overflow-hidden border ${
+            isLight
+              ? 'retail-card bg-white border-slate-200 shadow-xs'
+              : 'neon-card bg-neutral-900 border-neutral-800'
+          }`}>
+            <div className={`p-4 border-b flex items-center justify-between ${
+              isLight ? 'bg-slate-50 border-slate-200' : 'bg-neutral-950 border-neutral-800'
+            }`}>
+              <h3 className={`text-xs font-bold uppercase tracking-wider ${
+                isLight ? 'text-slate-900' : 'text-white'
               }`}>
-                <tr>
-                  <th className="px-4 py-3 font-bold">Commerce</th>
-                  <th className="px-4 py-3 font-bold">Activité</th>
-                  <th className="px-4 py-3 font-bold">Formule</th>
-                  <th className="px-4 py-3 font-bold">Échéance</th>
-                  <th className="px-4 py-3 font-bold text-center">Ventes Cumulées</th>
-                  <th className="px-4 py-3 font-bold text-right">Redevance (20 F)</th>
-                  <th className="px-4 py-3 font-bold">Statut</th>
-                  <th className="px-4 py-3 font-bold text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className={`divide-y ${isLight ? 'divide-slate-200' : 'divide-neutral-800/80'}`}>
-                {businesses.map((b) => {
-                  const fee = b.totalSalesCount * b.developerFeeRate;
-                  return (
-                    <tr key={b.id} className={`transition-colors ${
-                      isLight ? 'hover:bg-slate-50' : 'hover:bg-neutral-850/50'
-                    }`}>
-                      <td className="px-4 py-3">
-                        <div className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>{b.name}</div>
-                        <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
-                          {b.address} · {b.phone}
-                        </div>
-                      </td>
-                      <td className={`px-4 py-3 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>{b.tradeType}</td>
-                      <td className="px-4 py-3">
-                        <span className={`font-mono uppercase font-bold px-2 py-0.5 rounded border ${
-                          isLight
-                            ? 'bg-purple-100 text-purple-800 border-purple-200'
-                            : 'bg-purple-950/40 text-purple-400 border-purple-800'
-                        }`}>
-                          {b.subscriptionPlan}
-                        </span>
-                      </td>
-                      <td className={`px-4 py-3 font-mono ${isLight ? 'text-slate-600' : 'text-neutral-300'}`}>
-                        {b.subscriptionExpiresAt}
-                      </td>
-                      <td className={`px-4 py-3 text-center font-mono font-bold tabular-nums ${
-                        isLight ? 'text-slate-900' : 'text-white'
+                Commerces Partenaires & Codes d'Accès Session
+              </h3>
+              <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                {businesses.length} établissements actifs
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className={`border-b ${
+                  isLight ? 'bg-slate-100/70 border-slate-200 text-slate-700' : 'bg-neutral-950/80 border-neutral-800 text-neutral-400'
+                }`}>
+                  <tr>
+                    <th className="px-4 py-3 font-bold">Commerce</th>
+                    <th className="px-4 py-3 font-bold">Code Session Caissier</th>
+                    <th className="px-4 py-3 font-bold">Activité</th>
+                    <th className="px-4 py-3 font-bold">Formule</th>
+                    <th className="px-4 py-3 font-bold">Échéance</th>
+                    <th className="px-4 py-3 font-bold text-center">Ventes</th>
+                    <th className="px-4 py-3 font-bold text-right">Redevance (20 F)</th>
+                    <th className="px-4 py-3 font-bold">Statut</th>
+                    <th className="px-4 py-3 font-bold text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className={`divide-y ${isLight ? 'divide-slate-200' : 'divide-neutral-800/80'}`}>
+                  {businesses.map((b) => {
+                    const fee = b.totalSalesCount * b.developerFeeRate;
+                    const isCopied = copiedBizId === b.id;
+                    return (
+                      <tr key={b.id} className={`transition-colors ${
+                        isLight ? 'hover:bg-slate-50' : 'hover:bg-neutral-850/50'
                       }`}>
-                        {b.totalSalesCount}
-                      </td>
-                      <td className={`px-4 py-3 text-right font-mono font-bold tabular-nums ${
-                        isLight ? 'text-purple-800' : 'text-purple-400'
-                      }`}>
-                        {formatMoney(fee)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
-                            b.subscriptionStatus === 'active'
-                              ? isLight
-                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                : 'bg-emerald-950/40 text-emerald-400 border-emerald-800'
-                              : b.subscriptionStatus === 'trial'
-                              ? isLight
-                                ? 'bg-cyan-100 text-cyan-800 border-cyan-300'
-                                : 'bg-cyan-950/40 text-cyan-400 border-cyan-800'
-                              : isLight
-                              ? 'bg-rose-100 text-rose-800 border-rose-300'
-                              : 'bg-rose-950/40 text-rose-400 border-rose-800'
-                          }`}
-                        >
-                          {b.subscriptionStatus === 'active' ? 'Actif' : b.subscriptionStatus === 'trial' ? 'Essai' : 'Suspendu'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => handleRenewSubscription(b)}
-                            className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${
+                        <td className="px-4 py-3">
+                          <div className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>{b.name}</div>
+                          <div className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                            {b.address} · {b.phone}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="inline-flex items-center gap-1.5">
+                            <span className={`font-mono font-bold text-xs px-2.5 py-1 rounded border tracking-wider ${
                               isLight
-                                ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300'
-                                : 'bg-neutral-800 hover:bg-neutral-700 text-emerald-400'
-                            }`}
-                            title="Renouveler abonnement"
-                          >
-                            Renouveler
-                          </button>
-                          <button
-                            onClick={() => handleToggleBusinessStatus(b)}
-                            className={`p-1.5 rounded transition-colors ${
+                                ? 'bg-amber-50 text-amber-900 border-amber-300'
+                                : 'bg-amber-950/40 text-amber-300 border-amber-500/40'
+                            }`}>
+                              {b.accessCode || 'Non généré'}
+                            </span>
+                            <button
+                              onClick={() => handleCopyCode(b.accessCode, b.id)}
+                              className={`p-1.5 rounded transition-all ${
+                                isCopied
+                                  ? 'bg-emerald-500 text-white'
+                                  : isLight
+                                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                                  : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'
+                              }`}
+                              title="Copier le code pour le commerçant"
+                            >
+                              {isCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              onClick={() => handleRegenerateCode(b)}
+                              className={`p-1.5 rounded transition-colors ${
+                                isLight
+                                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                  : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-400'
+                              }`}
+                              title="Regénérer un nouveau code d'accès"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                        <td className={`px-4 py-3 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>{b.tradeType}</td>
+                        <td className="px-4 py-3">
+                          <span className={`font-mono uppercase font-bold px-2 py-0.5 rounded border ${
+                            isLight
+                              ? 'bg-purple-100 text-purple-800 border-purple-200'
+                              : 'bg-purple-950/40 text-purple-400 border-purple-800'
+                          }`}>
+                            {b.subscriptionPlan}
+                          </span>
+                        </td>
+                        <td className={`px-4 py-3 font-mono ${isLight ? 'text-slate-600' : 'text-neutral-300'}`}>
+                          {b.subscriptionExpiresAt}
+                        </td>
+                        <td className={`px-4 py-3 text-center font-mono font-bold tabular-nums ${
+                          isLight ? 'text-slate-900' : 'text-white'
+                        }`}>
+                          {b.totalSalesCount}
+                        </td>
+                        <td className={`px-4 py-3 text-right font-mono font-bold tabular-nums ${
+                          isLight ? 'text-purple-800' : 'text-purple-400'
+                        }`}>
+                          {formatMoney(fee)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
                               b.subscriptionStatus === 'active'
                                 ? isLight
-                                  ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
-                                  : 'text-neutral-400 hover:text-rose-400 hover:bg-neutral-800'
-                                : isLight
-                                ? 'text-emerald-700 hover:bg-emerald-50'
-                                : 'text-emerald-400 hover:bg-neutral-800'
+                                : 'bg-emerald-950/40 text-emerald-400 border-emerald-800'
                             }`}
-                            title={b.subscriptionStatus === 'active' ? 'Suspendre l\'accès' : 'Débloquer l\'accès'}
                           >
-                            {b.subscriptionStatus === 'active' ? <XCircle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            {b.subscriptionStatus === 'active' ? 'Actif' : b.subscriptionStatus === 'trial' ? 'Essai' : 'Suspendu'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleRenewSubscription(b)}
+                              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${
+                                isLight
+                                  ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300'
+                                  : 'bg-neutral-800 hover:bg-neutral-700 text-emerald-400'
+                              }`}
+                              title="Renouveler abonnement"
+                            >
+                              Renouveler
+                            </button>
+                            <button
+                              onClick={() => handleToggleBusinessStatus(b)}
+                              className={`p-1.5 rounded transition-colors ${
+                                b.subscriptionStatus === 'active'
+                                  ? isLight
+                                    ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                                    : 'text-neutral-400 hover:text-rose-400 hover:bg-neutral-800'
+                                  : isLight
+                                  ? 'text-emerald-700 hover:bg-emerald-50'
+                                  : 'text-emerald-400 hover:bg-neutral-800'
+                              }`}
+                              title={b.subscriptionStatus === 'active' ? 'Suspendre l\'accès' : 'Débloquer l\'accès'}
+                            >
+                              {b.subscriptionStatus === 'active' ? <XCircle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

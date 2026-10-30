@@ -55,6 +55,23 @@ function MainLayout() {
     return () => unsub();
   }, [currentBusiness.id]);
 
+  // Enforce strict RBAC view confidentiality
+  useEffect(() => {
+    if (currentUser.role === 'cashier') {
+      if (activeView !== 'pos') {
+        setActiveView('pos');
+      }
+    } else if (currentUser.role === 'manager') {
+      if (activeView === 'owner-dashboard' || activeView === 'dev-dashboard') {
+        setActiveView('pos');
+      }
+    } else if (currentUser.role === 'owner') {
+      if (activeView === 'dev-dashboard') {
+        setActiveView('owner-dashboard');
+      }
+    }
+  }, [currentUser.role, activeView]);
+
   // Handle user switch
   const handleSelectUser = (user: User) => {
     store.setCurrentUser(user.id);
@@ -67,6 +84,8 @@ function MainLayout() {
     // Switch view to match role (dev console is hidden behind 3 clicks + PIN)
     if (user.role === 'owner') {
       setActiveView('owner-dashboard');
+    } else if (user.role === 'developer') {
+      setActiveView('dev-dashboard');
     } else {
       setActiveView('pos');
     }

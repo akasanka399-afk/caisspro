@@ -1,6 +1,6 @@
 {
-  "name": "KassaPro - Caisse Tactile & Gestion de Vente",
-  "description": "Logiciel de caisse tactile ultra-rapide, gestion des stocks en temps réel, suivi de chiffre d'affaires (20F/vente) et tableau de bord développeur sécurisé.",
+  "name": "Caisse Pro - Caisse Tactile & Gestion Commerciale",
+  "description": "Logiciel Caisse Pro : caisse tactile rapide, suivi des stocks en temps réel, calcul des commissions (20F/vente) et console d'administration sécurisée.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

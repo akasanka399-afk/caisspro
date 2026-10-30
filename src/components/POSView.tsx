@@ -33,6 +33,15 @@ import { ReceiptModal } from './ReceiptModal';
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
 import { printThermalReceipt } from '../utils/printReceipt';
 
+export const DIRECT_LABEL_PRESETS = [
+  'Vente Directe',
+  'Recharge Télécom',
+  'Pain & Pâtisserie',
+  'Boissons',
+  'Alimentation',
+  'Divers',
+];
+
 interface POSViewProps {
   currentUser: User;
   business: Business;
@@ -198,10 +207,47 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         e.preventDefault();
         setPosMode((prev) => (prev === 'catalog' ? 'direct' : 'catalog'));
         playSoundEffect('beep');
-      } else if (e.key === 'F2' && posMode === 'catalog') {
+      } else if (e.key === 'F2') {
         e.preventDefault();
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
+        if (posMode === 'direct') {
+          directLabelInputRef.current?.focus();
+          directLabelInputRef.current?.select();
+          playSoundEffect('beep');
+        } else {
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+        }
+      } else if (e.key === 'F6') {
+        // Dedicated shortcut for Libellé Article
+        e.preventDefault();
+        if (posMode !== 'direct') {
+          setPosMode('direct');
+        }
+        setTimeout(() => {
+          directLabelInputRef.current?.focus();
+          directLabelInputRef.current?.select();
+        }, 50);
+        playSoundEffect('beep');
+      } else if (e.key === 'F7' && posMode === 'direct') {
+        // Quick quantity increment shortcut
+        e.preventDefault();
+        setDirectQuantity((q) => (q >= 12 ? 1 : q + 1));
+        playSoundEffect('beep');
+      } else if (posMode === 'direct' && e.altKey && !e.ctrlKey && !e.metaKey) {
+        // Quick label presets via Alt+1 to Alt+6
+        let digit = parseInt(e.key, 10);
+        if (isNaN(digit)) {
+          const match = e.code.match(/(?:Digit|Numpad)([1-6])/);
+          if (match) digit = parseInt(match[1], 10);
+        }
+        if (!isNaN(digit) && digit >= 1 && digit <= DIRECT_LABEL_PRESETS.length) {
+          e.preventDefault();
+          setDirectLabel(DIRECT_LABEL_PRESETS[digit - 1]);
+          playSoundEffect('beep');
+          if (document.activeElement !== directLabelInputRef.current) {
+            directInputRef.current?.focus();
+          }
+        }
       } else if (e.key === 'F3' && posMode === 'catalog') {
         e.preventDefault();
         barcodeInputRef.current?.focus();
@@ -924,9 +970,9 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               }`}
             >
               <div className="flex flex-wrap items-center gap-1.5">
-                {/* Libellé input */}
+                {/* Libellé input avec raccourci F2 */}
                 <div className="flex-1 min-w-[140px] relative">
-                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center gap-1">
                     <Tag className="w-3 h-3 text-amber-500" />
                   </div>
                   <input
@@ -939,21 +985,50 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                         e.preventDefault();
                         if (numDirectAmount > 0) {
                           handleAddDirectItem();
+                          directInputRef.current?.focus();
                         } else {
-                          handleValidateDirectSale();
+                          // Jump to amount input so cashier can type the price immediately
+                          directInputRef.current?.focus();
+                          playSoundEffect('beep');
                         }
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        directInputRef.current?.focus();
+                      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        const curIdx = DIRECT_LABEL_PRESETS.indexOf(directLabel);
+                        let nextIdx = 0;
+                        if (e.key === 'ArrowDown') {
+                          nextIdx = curIdx === -1 ? 0 : (curIdx + 1) % DIRECT_LABEL_PRESETS.length;
+                        } else {
+                          nextIdx = curIdx <= 0 ? DIRECT_LABEL_PRESETS.length - 1 : curIdx - 1;
+                        }
+                        setDirectLabel(DIRECT_LABEL_PRESETS[nextIdx]);
+                        playSoundEffect('beep');
                       }
                     }}
-                    placeholder="Libellé article (Pain, Boisson, Télécom...)"
-                    className={`w-full pl-7 pr-2 py-1 text-xs font-semibold rounded-lg border transition-all ${
+                    placeholder="Libellé article (Pain, Boisson, Télécom...) [F2]"
+                    className={`w-full pl-7 pr-8 py-1 text-xs font-semibold rounded-lg border transition-all ${
                       isLight
                         ? 'bg-slate-50 border-slate-300 text-slate-900 focus:outline-hidden focus:border-amber-500 focus:bg-white'
                         : 'bg-neutral-950 border-cyan-500/30 text-white focus:outline-hidden focus:border-cyan-400'
                     }`}
                   />
+                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <kbd
+                      className={`text-[9px] font-mono font-bold px-1 py-0.5 rounded border ${
+                        isLight
+                          ? 'bg-slate-200/80 text-slate-600 border-slate-300'
+                          : 'bg-neutral-800 text-cyan-300 border-neutral-700'
+                      }`}
+                      title="Raccourci clavier F2 (ou F6)"
+                    >
+                      F2
+                    </kbd>
+                  </div>
                 </div>
 
-                {/* Quantité Stepper */}
+                {/* Quantité Stepper avec raccourci F7 */}
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
@@ -970,21 +1045,24 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   >
                     <Minus className="w-3 h-3" />
                   </button>
-                  <input
-                    type="number"
-                    min="1"
-                    max="999"
-                    value={directQuantity}
-                    onChange={(e) => {
-                      const v = parseInt(e.target.value, 10);
-                      setDirectQuantity(isNaN(v) || v < 1 ? 1 : v);
-                    }}
-                    className={`w-10 h-7 text-center font-mono font-bold text-xs rounded-lg border transition-all ${
-                      isLight
-                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:outline-hidden focus:border-amber-500'
-                        : 'bg-neutral-950 border-cyan-500/30 text-white focus:outline-hidden focus:border-cyan-400'
-                    }`}
-                  />
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="1"
+                      max="999"
+                      value={directQuantity}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        setDirectQuantity(isNaN(v) || v < 1 ? 1 : v);
+                      }}
+                      className={`w-10 h-7 text-center font-mono font-bold text-xs rounded-lg border transition-all ${
+                        isLight
+                          ? 'bg-slate-50 border-slate-300 text-slate-900 focus:outline-hidden focus:border-amber-500'
+                          : 'bg-neutral-950 border-cyan-500/30 text-white focus:outline-hidden focus:border-cyan-400'
+                      }`}
+                      title="Quantité d'articles [F7 pour augmenter]"
+                    />
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -996,7 +1074,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                         ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
                         : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-cyan-500/30'
                     }`}
-                    title="Augmenter la quantité (+1)"
+                    title="Augmenter la quantité (+1) [F7]"
                   >
                     <Plus className="w-3 h-3" />
                   </button>
@@ -1023,11 +1101,14 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 </button>
               </div>
 
-              {/* Quick model chips & qty shortcuts */}
+              {/* Quick model chips avec raccourcis Alt+1..6 & qty shortcuts */}
               <div className="flex items-center justify-between gap-1 overflow-x-auto text-[10px]">
                 <div className="flex items-center gap-1 overflow-x-auto">
-                  <span className={`font-semibold opacity-60 mr-0.5 whitespace-nowrap`}>Modèles:</span>
-                  {['Vente Directe', 'Recharge Télécom', 'Pain', 'Boissons', 'Divers'].map((label) => (
+                  <span className={`font-semibold opacity-60 mr-0.5 whitespace-nowrap flex items-center gap-1`}>
+                    <span>Modèles:</span>
+                    <span className="text-[9px] opacity-75 font-mono">(Alt+1..6)</span>
+                  </span>
+                  {DIRECT_LABEL_PRESETS.map((label, idx) => (
                     <button
                       key={label}
                       type="button"
@@ -1035,7 +1116,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                         setDirectLabel(label);
                         playSoundEffect('beep');
                       }}
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap transition-colors border cursor-pointer ${
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap transition-colors border cursor-pointer flex items-center gap-1 ${
                         directLabel === label
                           ? isLight
                             ? 'bg-slate-900 text-white border-slate-900'
@@ -1044,8 +1125,10 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                           ? 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                           : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white'
                       }`}
+                      title={`Raccourci Alt+${idx + 1} (ou flèches haut/bas dans le champ libellé)`}
                     >
-                      {label}
+                      <span className="opacity-40 text-[9px] font-mono">{idx + 1}</span>
+                      <span>{label}</span>
                     </button>
                   ))}
                 </div>
@@ -1069,6 +1152,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                           ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
                           : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800'
                       }`}
+                      title={`Quantité ${q} (Raccourci F7)`}
                     >
                       x{q}
                     </button>
@@ -1560,11 +1644,11 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 <span
                   className={`text-[9px] font-mono px-1.5 py-0.2 rounded border ${
                     isLight
-                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                      : 'bg-emerald-950/40 text-emerald-400 border-emerald-800'
+                      ? 'bg-slate-100 text-slate-700 border-slate-300'
+                      : 'bg-neutral-800 text-neutral-300 border-neutral-700'
                   }`}
                 >
-                  +20 F / vente
+                  {recentTransactions.length} vente{recentTransactions.length > 1 ? 's' : ''}
                 </span>
               </div>
 

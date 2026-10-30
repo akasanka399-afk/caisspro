@@ -29,6 +29,7 @@ interface StockInventoryViewProps {
 export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentUser, business }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
+  const isOwnerOrDev = currentUser.role === 'owner' || currentUser.role === 'developer';
 
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
@@ -202,7 +203,7 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
           </span>
         </div>
 
-        {/* Stock Asset Value */}
+        {/* Stock Asset Value (Confidential to Owner / Dev) */}
         <div className={`p-4 rounded-xl space-y-1 transition-all ${
           isLight
             ? 'retail-card bg-white border border-slate-200 shadow-xs'
@@ -210,17 +211,17 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
         }`}>
           <div className="flex items-center justify-between">
             <span className={`text-xs font-medium ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
-              Valeur Marchande du Stock (Achat)
+              {isOwnerOrDev ? 'Valeur Marchande du Stock (Achat)' : 'Articles Disponibles en Rayon'}
             </span>
             <TrendingUp className={`w-4 h-4 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
           </div>
           <div className={`text-2xl font-extrabold font-mono tabular-nums ${
             isLight ? 'text-emerald-700' : 'text-emerald-400 neon-text-green'
           }`}>
-            {formatMoney(totalStockAssetValue)}
+            {isOwnerOrDev ? formatMoney(totalStockAssetValue) : `${products.filter((p) => p.stock > 0).length} en vente`}
           </div>
           <span className={`text-[11px] font-mono ${isLight ? 'text-emerald-700/80' : 'text-emerald-500/80'}`}>
-            Actif immobilisé magasin
+            {isOwnerOrDev ? 'Actif immobilisé magasin' : `${products.filter((p) => p.stock === 0).length} article(s) en rupture`}
           </span>
         </div>
 
@@ -393,9 +394,10 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
                     <th className="px-4 py-3 font-bold">Produit</th>
                     <th className="px-4 py-3 font-bold">Catégorie</th>
                     <th className="px-4 py-3 font-bold">Code-barres</th>
-                    <th className="px-4 py-3 font-bold text-right">P. Achat</th>
+                    {isOwnerOrDev && <th className="px-4 py-3 font-bold text-right">P. Achat</th>}
                     <th className="px-4 py-3 font-bold text-right">P. Vente</th>
-                    <th className="px-4 py-3 font-bold text-right">Marge</th>
+                    {isOwnerOrDev && <th className="px-4 py-3 font-bold text-right">Marge</th>}
+                    {!isOwnerOrDev && <th className="px-4 py-3 font-bold text-center">Unité</th>}
                     <th className="px-4 py-3 font-bold text-center">Stock Actuel</th>
                     <th className="px-4 py-3 font-bold text-right">Actions</th>
                   </tr>
@@ -421,15 +423,24 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
                         </td>
                         <td className={`px-4 py-3 ${isLight ? 'text-slate-600' : 'text-neutral-300'}`}>{p.category}</td>
                         <td className={`px-4 py-3 font-mono ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>{p.barcode}</td>
-                        <td className={`px-4 py-3 text-right font-mono tabular-nums ${isLight ? 'text-slate-600' : 'text-neutral-400'}`}>
-                          {formatMoney(p.purchasePrice)}
-                        </td>
+                        {isOwnerOrDev && (
+                          <td className={`px-4 py-3 text-right font-mono tabular-nums ${isLight ? 'text-slate-600' : 'text-neutral-400'}`}>
+                            {formatMoney(p.purchasePrice)}
+                          </td>
+                        )}
                         <td className={`px-4 py-3 text-right font-mono font-bold tabular-nums ${isLight ? 'text-slate-900' : 'text-white'}`}>
                           {formatMoney(p.salePrice)}
                         </td>
-                        <td className={`px-4 py-3 text-right font-mono font-semibold tabular-nums ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
-                          +{formatMoney(margin)} ({marginPct}%)
-                        </td>
+                        {isOwnerOrDev && (
+                          <td className={`px-4 py-3 text-right font-mono font-semibold tabular-nums ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
+                            +{formatMoney(margin)} ({marginPct}%)
+                          </td>
+                        )}
+                        {!isOwnerOrDev && (
+                          <td className={`px-4 py-3 text-center font-mono ${isLight ? 'text-slate-600' : 'text-neutral-300'}`}>
+                            {p.unit}
+                          </td>
+                        )}
                         <td className="px-4 py-3 text-center">
                           <span
                             className={`inline-flex items-center gap-1 font-mono font-bold px-2 py-0.5 rounded text-[11px] ${

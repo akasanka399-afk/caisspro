@@ -12,20 +12,22 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({ 
 
   const shortcuts = [
     { key: 'F1', desc: 'Ouvrir ce guide des raccourcis clavier' },
-    { key: 'F2', desc: 'Recherche rapide de produit par nom' },
-    { key: 'F3', desc: 'Scanner ou saisir un code-barres' },
+    { key: 'F2 / F6', desc: 'Caisse Rapide : Saisir le libellé de l\'article (ou recherche en Catalogue)' },
+    { key: 'Alt + 1 à 6', desc: 'Caisse Rapide : Choisir un modèle de libellé (Télécom, Pain, Boisson...)' },
+    { key: '↓ / ↑', desc: 'Dans le champ libellé : Défiler les modèles d\'articles sans la souris' },
+    { key: 'F7', desc: 'Caisse Rapide : Augmenter la quantité d\'articles (+1)' },
+    { key: '+', desc: 'Caisse Rapide : Ajouter montant et quantité au ticket cumulé' },
+    { key: 'F3', desc: 'Catalogue : Scanner ou saisir un code-barres' },
     { key: 'F4', desc: 'Sélectionner ou saisir le client (figurera sur le reçu)' },
-    { key: 'F5', desc: 'Basculer vers la Caisse Rapide (Saisie Directe du Montant)' },
-    { key: 'F8', desc: 'Appliquer une remise sur le ticket' },
+    { key: 'F5', desc: 'Basculer entre Caisse Rapide et Catalogue' },
+    { key: 'F8', desc: 'Catalogue : Appliquer une remise sur le ticket' },
     { key: 'F9', desc: 'Règlement rapide en Espèces (Cash)' },
     { key: 'F10', desc: 'Règlement Mobile Money (Wave / Orange)' },
     { key: 'F11', desc: 'Règlement Carte Bancaire' },
-    { key: 'F12', desc: 'Imprimer le ticket de caisse (format thermique avec caissière & client)' },
-    { key: '+', desc: 'Caisse Rapide : Ajouter montant et quantité au ticket' },
-    { key: 'Entrée', desc: 'Valider et finaliser l\'encaissement' },
-    { key: 'Espace', desc: 'Appoint exact (espèces reçues = total)' },
-    { key: 'Échap', desc: 'Annuler / Vider le panier ou le ticket' },
-    { key: '+ / -', desc: 'Catalogue : Augmenter ou réduire la quantité de l\'article' },
+    { key: 'F12', desc: 'Imprimer le ticket de caisse thermique (80mm / 58mm)' },
+    { key: 'Entrée', desc: 'Valider et finaliser l\'encaissement (ou passer au prix depuis libellé)' },
+    { key: 'Espace', desc: 'Appoint exact (espèces reçues = total à payer)' },
+    { key: 'Échap', desc: 'Annuler / Retour au montant ou vider le ticket' },
   ];
 
   return (
