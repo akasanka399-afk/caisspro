@@ -28,9 +28,13 @@ import {
   Tag,
   Receipt,
   Phone,
+  Camera,
+  ScanLine,
+  BookOpen,
 } from 'lucide-react';
 import { ReceiptModal } from './ReceiptModal';
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
+import { CameraBarcodeScannerModal } from './CameraBarcodeScannerModal';
 import { printThermalReceipt } from '../utils/printReceipt';
 
 export const DIRECT_LABEL_PRESETS = [
@@ -96,6 +100,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   // Modals
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
   const [showCustomerModal, setShowCustomerModal] = useState<boolean>(false);
+  const [showCameraScannerModal, setShowCameraScannerModal] = useState<boolean>(false);
   const [quickBarcodeNotice, setQuickBarcodeNotice] = useState<string | null>(null);
   const [globalNotice, setGlobalNotice] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
@@ -248,10 +253,10 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
             directInputRef.current?.focus();
           }
         }
-      } else if (e.key === 'F3' && posMode === 'catalog') {
+      } else if (e.key === 'F3') {
         e.preventDefault();
-        barcodeInputRef.current?.focus();
-        barcodeInputRef.current?.select();
+        setShowCameraScannerModal((prev) => !prev);
+        playSoundEffect('beep');
       } else if (e.key === 'F4') {
         e.preventDefault();
         setShowCustomerModal((prev) => !prev);
@@ -288,7 +293,8 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         e.preventDefault();
         handlePrintTicket();
       } else if (e.key === 'Escape') {
-        if (showShortcutsModal) setShowShortcutsModal(false);
+        if (showCameraScannerModal) setShowCameraScannerModal(false);
+        else if (showShortcutsModal) setShowShortcutsModal(false);
         else if (showCustomerModal) setShowCustomerModal(false);
         else if (completedTx) setCompletedTx(null);
         else if (posMode === 'direct') {
@@ -438,25 +444,120 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     playSoundEffect('beep');
   };
 
-  // Barcode handler
+  // Unified barcode handler for both Camera scanner and external USB handheld scanner
+  const handleProcessScannedBarcode = (rawCode: string): { success: boolean; product?: Product; error?: string } => {
+    if (!rawCode || !rawCode.trim()) {
+      return { success: false, error: 'Code vide' };
+    }
+
+    const cleanCode = rawCode.trim();
+    // Match by exact barcode or product code or stripped whitespace
+    const matched = products.find(
+      (p) =>
+        p.barcode?.trim() === cleanCode ||
+        p.code?.toLowerCase().trim() === cleanCode.toLowerCase() ||
+        p.barcode?.replace(/\s+/g, '') === cleanCode.replace(/\s+/g, '')
+    );
+
+    if (matched) {
+      playSoundEffect('beep');
+
+      if (posMode === 'catalog') {
+        addToCart(matched, 1);
+        setQuickBarcodeNotice(`Scanné : ${matched.name} (${formatMoney(matched.salePrice)})`);
+      } else {
+        // Mode Caisse Rapide: add or increment in directItems
+        setDirectItems((prev) => {
+          const existingIdx = prev.findIndex(
+            (it) => it.label === matched.name && it.amount === matched.salePrice
+          );
+          if (existingIdx >= 0) {
+            const updated = [...prev];
+            updated[existingIdx] = {
+              ...updated[existingIdx],
+              quantity: updated[existingIdx].quantity + 1,
+            };
+            return updated;
+          }
+          return [
+            ...prev,
+            {
+              id: `scan_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              label: matched.name,
+              amount: matched.salePrice,
+              quantity: 1,
+            },
+          ];
+        });
+        setDirectLabel(matched.name);
+        setQuickBarcodeNotice(`Article scanné : ${matched.name} · ${formatMoney(matched.salePrice)}`);
+      }
+
+      setTimeout(() => setQuickBarcodeNotice(null), 3500);
+      return { success: true, product: matched };
+    } else {
+      playSoundEffect('error');
+      if (posMode === 'direct') {
+        setDirectLabel(`Article #${cleanCode}`);
+        setQuickBarcodeNotice(`Code-barres ${cleanCode} non trouvé au catalogue. Saisissez son prix.`);
+      } else {
+        setQuickBarcodeNotice(`Code-barres ${cleanCode} introuvable dans le catalogue.`);
+      }
+      setTimeout(() => setQuickBarcodeNotice(null), 3500);
+      return { success: false, error: `Code ${cleanCode} non répertorié` };
+    }
+  };
+
+  // Barcode input form submit (manual keyboard submit in catalog mode)
   const handleBarcodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!barcodeInput.trim()) return;
-
-    const code = barcodeInput.trim();
-    const matched = products.find((p) => p.barcode === code || p.code.toLowerCase() === code.toLowerCase());
-
-    if (matched) {
-      addToCart(matched, 1);
-      setQuickBarcodeNotice(`Article scanné : ${matched.name}`);
-      setTimeout(() => setQuickBarcodeNotice(null), 2500);
-      setBarcodeInput('');
-    } else {
-      playSoundEffect('error');
-      setQuickBarcodeNotice(`Code introuvable : ${code}`);
-      setTimeout(() => setQuickBarcodeNotice(null), 3000);
-    }
+    handleProcessScannedBarcode(barcodeInput.trim());
+    setBarcodeInput('');
   };
+
+  // Hardware USB Barcode Scanner (Keyboard Wedge) listener
+  const usbScannerBufferRef = useRef<string>('');
+  const lastKeyTimestampRef = useRef<number>(0);
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement as HTMLElement | null;
+      const isInput = ['INPUT', 'TEXTAREA'].includes(activeEl?.tagName || '');
+
+      // If user is typing in regular text fields (like search or customer name), ignore unless it's direct amount or barcode
+      if (isInput && activeEl !== directInputRef.current && activeEl !== barcodeInputRef.current) {
+        return;
+      }
+
+      const now = Date.now();
+      const timeDiff = now - lastKeyTimestampRef.current;
+      lastKeyTimestampRef.current = now;
+
+      // Hardware scanners type at superhuman speed (< 60ms between characters)
+      if (e.key === 'Enter') {
+        if (usbScannerBufferRef.current.length >= 3 && timeDiff < 90) {
+          // Hardware USB scan completed!
+          e.preventDefault();
+          e.stopPropagation();
+          const scannedCode = usbScannerBufferRef.current;
+          usbScannerBufferRef.current = '';
+          handleProcessScannedBarcode(scannedCode);
+          return;
+        }
+        usbScannerBufferRef.current = '';
+      } else if (e.key.length === 1) {
+        if (timeDiff > 70 && usbScannerBufferRef.current.length > 0) {
+          // Reset buffer if delay too long (manual human typing)
+          usbScannerBufferRef.current = '';
+        }
+        usbScannerBufferRef.current += e.key;
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
+  }, [products, posMode]);
 
   // Mode Catalogue: Validate sale
   const handleValidateSale = () => {
@@ -470,6 +571,13 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       if (rec < cartTotal) {
         playSoundEffect('error');
         alert(`Montant reçu (${rec} F) insuffisant pour couvrir le total de ${cartTotal} F CFA.`);
+        return;
+      }
+    } else if (paymentMethod === 'credit') {
+      if (!selectedCustomerId) {
+        playSoundEffect('error');
+        alert('Vente à crédit : Veuillez sélectionner ou créer le client (touche F4) pour porter cette dette au carnet.');
+        setShowCustomerModal(true);
         return;
       }
     }
@@ -661,14 +769,32 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         alert(`Montant remis (${rec} F) insuffisant pour régler ${totalToPay} F CFA.`);
         return;
       }
+    } else if (directPaymentMethod === 'credit') {
+      const existingCustomer = customers.find((c) => c.id === selectedCustomerId);
+      const targetName = existingCustomer?.name || directCustomerName.trim();
+      if (!targetName) {
+        playSoundEffect('error');
+        alert('Vente à crédit : Veuillez indiquer le nom du client (ou sélectionner dans le répertoire [F4]) pour porter la dette au carnet.');
+        return;
+      }
     }
 
     setIsProcessing(true);
 
     // Resolve customer information (either from directory or directly typed)
-    const customer = customers.find((c) => c.id === selectedCustomerId);
+    let customer = customers.find((c) => c.id === selectedCustomerId);
     const finalCustomerName = customer?.name || (directCustomerName.trim().length > 0 ? directCustomerName.trim() : undefined);
     const finalCustomerPhone = customer?.phone || (directCustomerPhone.trim().length > 0 ? directCustomerPhone.trim() : undefined);
+
+    // If credit sale without existing directory entry, auto-create customer profile
+    if (directPaymentMethod === 'credit' && !customer && finalCustomerName) {
+      customer = store.addCustomer({
+        businessId: business.id,
+        name: finalCustomerName,
+        phone: finalCustomerPhone || 'N/A',
+        creditBalance: 0,
+      });
+    }
 
     const tx = store.completeSale({
       businessId: business.id,
@@ -770,8 +896,42 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
           </button>
         </div>
 
-        {/* Right Tools: Print Ticket + Keyboard Shortcut */}
-        <div className="flex items-center gap-2">
+        {/* Right Tools: Scanner Caméra + Douchette USB Status + Print Ticket + Keyboard Shortcut */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Bouton Scanner Caméra (F3) */}
+          <button
+            type="button"
+            onClick={() => setShowCameraScannerModal(true)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border cursor-pointer active:scale-95 ${
+              isLight
+                ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-2xs'
+                : 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border-cyan-400/50 shadow-[0_0_12px_rgba(0,242,254,0.2)]'
+            }`}
+            title="Activer le scanner de code-barres par caméra (F3)"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            <span>Scan Caméra</span>
+            <kbd className={`text-[10px] font-mono px-1 rounded ${
+              isLight ? 'bg-amber-600 text-white' : 'bg-cyan-950 text-cyan-300 border border-cyan-500/30'
+            }`}>
+              F3
+            </kbd>
+          </button>
+
+          {/* Badge statut Douchette USB connectée */}
+          <div
+            className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border ${
+              isLight
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : 'bg-emerald-950/40 text-emerald-400 border-emerald-600/30'
+            }`}
+            title="Votre lecteur de code-barres USB est détecté et actif. Scannez un article à tout moment."
+          >
+            <Barcode className="w-3.5 h-3.5" />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Douchette USB Prête</span>
+          </div>
+
           <button
             type="button"
             onClick={handlePrintTicket}
@@ -1099,6 +1259,21 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   <Plus className="w-3 h-3 stroke-[3]" />
                   <span>Ajouter [+]</span>
                 </button>
+
+                {/* Bouton Scanner Caméra en Caisse Rapide */}
+                <button
+                  type="button"
+                  onClick={() => setShowCameraScannerModal(true)}
+                  className={`h-7 px-2 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 border transition-all cursor-pointer whitespace-nowrap active:scale-95 shadow-2xs shrink-0 ${
+                    isLight
+                      ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
+                      : 'bg-[#121833] hover:bg-[#1a2245] text-cyan-300 border-cyan-500/40 shadow-[0_0_8px_rgba(0,242,254,0.2)]'
+                  }`}
+                  title="Scanner le code-barres de l'article avec la caméra [F3]"
+                >
+                  <Camera className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Scan [F3]</span>
+                </button>
               </div>
 
               {/* Quick model chips avec raccourcis Alt+1..6 & qty shortcuts */}
@@ -1248,7 +1423,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
             {/* 4. PAYMENT METHOD & CASH TENDER BAR */}
             <div className="space-y-1.5 shrink-0">
               {/* Payment selector */}
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -1311,7 +1486,52 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   <span className="text-xs">Carte</span>
                   <span className="text-[10px] font-mono opacity-60">F11</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDirectPaymentMethod('credit');
+                    playSoundEffect('beep');
+                  }}
+                  className={`py-2 px-2 rounded-xl border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    directPaymentMethod === 'credit'
+                      ? isLight
+                        ? 'bg-amber-50 border-amber-500 text-amber-900 font-bold shadow-2xs ring-1 ring-amber-400'
+                        : 'bg-amber-950/50 border-amber-400 text-amber-300 font-bold shadow-[0_0_12px_rgba(245,158,11,0.3)] ring-1 ring-amber-400'
+                      : isLight
+                      ? 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      : 'bg-[#0a0d1e] border-neutral-800 text-neutral-400'
+                  }`}
+                  title="Porter cet achat sur le carnet de crédit du client"
+                >
+                  <BookOpen className="w-4 h-4 text-amber-500" />
+                  <span className="text-xs">Crédit / Dette</span>
+                </button>
               </div>
+
+              {/* Notice informative si vente à crédit sélectionnée */}
+              {directPaymentMethod === 'credit' && (
+                <div
+                  className={`p-2.5 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2 transition-all ${
+                    isLight
+                      ? 'bg-amber-50/90 border-amber-300 text-amber-950'
+                      : 'bg-amber-950/30 border-amber-500/40 text-amber-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span>
+                      Vente portée au carnet de crédit du client :{' '}
+                      <strong>{directCustomerName.trim() || selectedCustomer?.name || 'Nom client requis ci-dessus'}</strong>
+                    </span>
+                  </div>
+                  {selectedCustomer && (
+                    <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-amber-500/10 border border-amber-400/30">
+                      Dette actuelle : {formatMoney(selectedCustomer.creditBalance)}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Cash tender & change line (if cash) */}
               {directPaymentMethod === 'cash' && (
@@ -1758,36 +1978,52 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 </span>
               </div>
 
-              {/* Barcode scanner input (F3) */}
-              <form onSubmit={handleBarcodeSubmit} className="relative flex-1 min-w-[220px]">
-                <Barcode
-                  className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${
-                    isLight ? 'text-amber-600' : 'text-cyan-400'
-                  }`}
-                />
-                <input
-                  ref={barcodeInputRef}
-                  type="text"
-                  value={barcodeInput}
-                  onChange={(e) => setBarcodeInput(e.target.value)}
-                  placeholder="Scanner code-barres (F3)..."
-                  className={`w-full pl-9 pr-14 py-2 rounded-lg text-xs font-mono transition-colors focus:outline-hidden ${
-                    isLight
-                      ? 'bg-slate-50 border border-amber-300 text-amber-900 placeholder-slate-400 focus:border-amber-500 focus:bg-white'
-                      : 'bg-[#060812] border border-cyan-400/50 text-cyan-300 placeholder-neutral-500 focus:border-cyan-400 focus:shadow-[0_0_12px_rgba(0,242,254,0.4)]'
-                  }`}
-                />
+              {/* Barcode scanner input and Camera Scan button (F3) */}
+              <div className="flex items-center gap-1.5 flex-1 min-w-[260px]">
+                <form onSubmit={handleBarcodeSubmit} className="relative flex-1">
+                  <Barcode
+                    className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${
+                      isLight ? 'text-amber-600' : 'text-cyan-400'
+                    }`}
+                  />
+                  <input
+                    ref={barcodeInputRef}
+                    type="text"
+                    value={barcodeInput}
+                    onChange={(e) => setBarcodeInput(e.target.value)}
+                    placeholder="Douchette USB ou taper code..."
+                    className={`w-full pl-9 pr-14 py-2 rounded-lg text-xs font-mono transition-colors focus:outline-hidden ${
+                      isLight
+                        ? 'bg-slate-50 border border-amber-300 text-amber-900 placeholder-slate-400 focus:border-amber-500 focus:bg-white'
+                        : 'bg-[#060812] border border-cyan-400/50 text-cyan-300 placeholder-neutral-500 focus:border-cyan-400 focus:shadow-[0_0_12px_rgba(0,242,254,0.4)]'
+                    }`}
+                  />
+                  <button
+                    type="submit"
+                    className={`absolute right-1 top-1/2 -translate-y-1/2 px-2.5 py-1 text-[10px] font-bold rounded transition-colors ${
+                      isLight
+                        ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-2xs'
+                        : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 shadow-[0_0_8px_rgba(0,242,254,0.7)]'
+                    }`}
+                  >
+                    Valider
+                  </button>
+                </form>
+
                 <button
-                  type="submit"
-                  className={`absolute right-1 top-1/2 -translate-y-1/2 px-2.5 py-1 text-[10px] font-bold rounded transition-colors ${
+                  type="button"
+                  onClick={() => setShowCameraScannerModal(true)}
+                  className={`h-9 px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
                     isLight
-                      ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-2xs'
-                      : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 shadow-[0_0_8px_rgba(0,242,254,0.7)]'
+                      ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-2xs'
+                      : 'bg-cyan-500 hover:bg-cyan-400 text-neutral-950 border-cyan-400 shadow-[0_0_12px_rgba(0,242,254,0.35)]'
                   }`}
+                  title="Ouvrir le lecteur caméra [F3]"
                 >
-                  Scan
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Caméra [F3]</span>
                 </button>
-              </form>
+              </div>
             </div>
 
             {/* Barcode feedback notice banner if present */}
@@ -2030,7 +2266,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               </div>
 
               {/* Payment Method Selector */}
-              <div className="grid grid-cols-3 gap-1.5 pt-1">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('cash')}
@@ -2054,7 +2290,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   }`}
                 >
                   <Smartphone className="w-3.5 h-3.5" />
-                  <span>Wave / OM [F10]</span>
+                  <span>Wave / OM</span>
                 </button>
 
                 <button
@@ -2067,9 +2303,51 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   }`}
                 >
                   <CreditCard className="w-3.5 h-3.5" />
-                  <span>Carte [F11]</span>
+                  <span>Carte</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaymentMethod('credit');
+                    if (!selectedCustomerId) {
+                      setShowCustomerModal(true);
+                    }
+                  }}
+                  className={`py-1.5 px-2 rounded-lg text-xs font-bold border flex items-center justify-center gap-1 transition-colors ${
+                    paymentMethod === 'credit'
+                      ? isLight ? 'bg-amber-500 text-white border-amber-500 shadow-2xs' : 'bg-amber-400 text-neutral-950 font-black border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.4)]'
+                      : isLight ? 'bg-white border-slate-200 text-slate-700' : 'bg-neutral-900 border-neutral-800 text-neutral-400'
+                  }`}
+                  title="Inscrire cet achat sur la dette du client"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>Crédit [Carnet]</span>
                 </button>
               </div>
+
+              {/* Notice si paiement à crédit sélectionné en mode catalogue */}
+              {paymentMethod === 'credit' && (
+                <div
+                  className={`p-2 rounded-xl border text-xs flex items-center justify-between transition-all ${
+                    isLight
+                      ? 'bg-amber-50 border-amber-300 text-amber-950'
+                      : 'bg-amber-950/30 border-amber-500/40 text-amber-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span>
+                      Compte client : <strong>{selectedCustomer ? selectedCustomer.name : 'Sélectionnez un client (F4)'}</strong>
+                    </span>
+                  </div>
+                  {selectedCustomer && (
+                    <span className="font-mono text-[11px] font-bold">
+                      Dette actuelle : {formatMoney(selectedCustomer.creditBalance)}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Big Validate Button */}
               <button
@@ -2181,6 +2459,15 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
           onClose={() => setCompletedTx(null)}
         />
       )}
+
+      {/* Camera Barcode Scanner Modal */}
+      <CameraBarcodeScannerModal
+        isOpen={showCameraScannerModal}
+        onClose={() => setShowCameraScannerModal(false)}
+        onBarcodeScanned={handleProcessScannedBarcode}
+        products={products}
+        currentMode={posMode}
+      />
     </div>
   );
 };

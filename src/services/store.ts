@@ -1,6 +1,7 @@
 import {
   Business,
   CashRegisterSession,
+  CreditSettlement,
   Customer,
   Product,
   PushNotification,
@@ -36,6 +37,7 @@ const STORAGE_KEYS = {
   NOTIFICATIONS: 'kassapro_notifications',
   MOVEMENTS: 'kassapro_movements',
   CURRENT_USER_ID: 'kassapro_current_user_id',
+  CREDIT_SETTLEMENTS: 'kassapro_credit_settlements',
 };
 
 // Default seed businesses
@@ -1262,6 +1264,93 @@ class StoreService {
     const updated = list.find((c) => c.id === customerId);
     if (updated) syncDocToFirestore('customers', customerId, updated);
     this.broadcast();
+  }
+
+  // --- Credit & Debt Management ---
+  public getCreditSettlements(businessId?: string, customerId?: string): CreditSettlement[] {
+    const data = localStorage.getItem(STORAGE_KEYS.CREDIT_SETTLEMENTS);
+    let list: CreditSettlement[] = data ? JSON.parse(data) : [];
+    if (businessId && businessId !== 'all') {
+      list = list.filter((s) => s.businessId === businessId);
+    }
+    if (customerId) {
+      list = list.filter((s) => s.customerId === customerId);
+    }
+    return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+
+  public recordCreditPayment(data: {
+    businessId: string;
+    customerId: string;
+    amount: number;
+    paymentMethod: 'cash' | 'mobile_money' | 'card';
+    cashierName: string;
+    notes?: string;
+  }): { settlement: CreditSettlement; updatedCustomer: Customer } {
+    const customers = this.getCustomers();
+    const customer = customers.find((c) => c.id === data.customerId);
+    if (!customer) {
+      throw new Error('Client introuvable');
+    }
+
+    const previousBalance = customer.creditBalance;
+    const paymentAmount = Math.max(0, data.amount);
+    const newBalance = Math.max(0, previousBalance - paymentAmount);
+    customer.creditBalance = newBalance;
+
+    localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
+    syncDocToFirestore('customers', customer.id, customer);
+
+    const settlements = this.getCreditSettlements();
+    const newSettlement: CreditSettlement = {
+      id: `stl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      businessId: data.businessId,
+      customerId: customer.id,
+      customerName: customer.name,
+      amount: paymentAmount,
+      paymentMethod: data.paymentMethod,
+      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      cashierName: data.cashierName,
+      notes: data.notes || 'Règlement de dette / acompte carnet',
+      previousBalance,
+      newBalance,
+    };
+
+    settlements.unshift(newSettlement);
+    localStorage.setItem(STORAGE_KEYS.CREDIT_SETTLEMENTS, JSON.stringify(settlements));
+    syncDocToFirestore('credit_settlements', newSettlement.id, newSettlement);
+
+    // If payment was made in cash, update active cash register session
+    if (data.paymentMethod === 'cash') {
+      const activeSession = this.getActiveCashSession(data.businessId);
+      if (activeSession) {
+        activeSession.expectedCash += paymentAmount;
+        this.updateCashSession(activeSession);
+      }
+    }
+
+    this.broadcast();
+    return { settlement: newSettlement, updatedCustomer: customer };
+  }
+
+  public adjustCustomerCredit(data: {
+    businessId: string;
+    customerId: string;
+    deltaAmount: number;
+    reason: string;
+    cashierName: string;
+  }): Customer {
+    const customers = this.getCustomers();
+    const customer = customers.find((c) => c.id === data.customerId);
+    if (!customer) {
+      throw new Error('Client introuvable');
+    }
+
+    customer.creditBalance = Math.max(0, customer.creditBalance + data.deltaAmount);
+    localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
+    syncDocToFirestore('customers', customer.id, customer);
+    this.broadcast();
+    return customer;
   }
 
   // --- Transactions & Sale Engine ---

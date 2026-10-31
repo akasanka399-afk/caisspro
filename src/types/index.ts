@@ -150,3 +150,17 @@ export interface StockMovement {
   userName: string;
   timestamp: string;
 }
+
+export interface CreditSettlement {
+  id: string;
+  businessId: string;
+  customerId: string;
+  customerName: string;
+  amount: number;
+  paymentMethod: 'cash' | 'mobile_money' | 'card';
+  timestamp: string;
+  cashierName: string;
+  notes?: string;
+  previousBalance: number;
+  newBalance: number;
+}

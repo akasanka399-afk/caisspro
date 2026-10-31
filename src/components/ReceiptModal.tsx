@@ -177,60 +177,61 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
         >
           <div
             id="thermal-receipt-print-area"
-            className="w-full max-w-[340px] bg-white text-neutral-900 p-5 rounded-md shadow-md text-xs font-mono leading-relaxed select-text border border-neutral-300"
+            className="w-full max-w-[340px] bg-white text-black p-5 rounded-md shadow-md text-xs font-sans leading-snug select-text border-2 border-black"
+            style={{ color: '#000000', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
           >
             {/* Store details */}
-            <div className="text-center pb-3 border-b border-dashed border-neutral-300">
-              <h2 className="text-base font-bold tracking-tight text-neutral-950 uppercase">{business.name}</h2>
-              {business.address && <p className="text-[11px] text-neutral-600">{business.address}</p>}
-              {business.phone && <p className="text-[11px] text-neutral-600">Tél: {business.phone}</p>}
-              <p className="text-[10px] text-neutral-500 mt-1">N° RCCM / Commerce Enregistré</p>
+            <div className="text-center pb-3 border-b-2 border-black">
+              <h2 className="text-base font-black tracking-wide text-black uppercase">{business.name}</h2>
+              {business.address && <p className="text-xs font-bold text-black mt-0.5">{business.address}</p>}
+              {business.phone && <p className="text-xs font-bold text-black">Tél: {business.phone}</p>}
+              <p className="text-[11px] font-bold text-black mt-1">Commerce Enregistré · Caisse Pro</p>
             </div>
 
             {/* Ticket info */}
-            <div className="py-2.5 border-b border-dashed border-neutral-300 text-[11px] space-y-1">
+            <div className="py-2.5 border-b-2 border-dashed border-black text-xs font-bold text-black space-y-1">
               <div className="flex justify-between">
                 <span>Ticket N°:</span>
-                <span className="font-bold">{transaction.ticketNumber}</span>
+                <span className="font-black">{transaction.ticketNumber}</span>
               </div>
               <div className="flex justify-between">
                 <span>Date:</span>
-                <span>{formatDate(transaction.timestamp)}</span>
+                <span className="font-bold">{formatDate(transaction.timestamp)}</span>
               </div>
               <div className="flex justify-between">
-                <span>Caissière / Caissier:</span>
-                <span className="font-bold text-neutral-950">{transaction.cashierName || 'Caisse Principale'}</span>
+                <span>Caissier(ère):</span>
+                <span className="font-black text-black">{transaction.cashierName || 'Caisse Principale'}</span>
               </div>
               <div className="flex justify-between">
                 <span>Client:</span>
-                <span className="font-bold text-neutral-950">{transaction.customerName || 'Client Comptoir'}</span>
+                <span className="font-black text-black">{transaction.customerName || 'Client Comptoir'}</span>
               </div>
               {transaction.customerPhone && (
                 <div className="flex justify-between">
                   <span>Tél. Client:</span>
-                  <span className="font-bold font-mono text-neutral-950">{transaction.customerPhone}</span>
+                  <span className="font-black text-black">{transaction.customerPhone}</span>
                 </div>
               )}
             </div>
 
             {/* Items table */}
-            <div className="py-2.5 border-b border-dashed border-neutral-300">
-              <table className="w-full text-[11px]">
+            <div className="py-2.5 border-b-2 border-dashed border-black">
+              <table className="w-full text-xs text-black">
                 <thead>
-                  <tr className="border-b border-neutral-200 text-neutral-600 text-left">
-                    <th className="pb-1">Désignation</th>
-                    <th className="pb-1 text-center">Qté</th>
-                    <th className="pb-1 text-right">P.U</th>
-                    <th className="pb-1 text-right">Total</th>
+                  <tr className="border-b-2 border-black text-black text-left font-black">
+                    <th className="pb-1.5">Désignation</th>
+                    <th className="pb-1.5 text-center">Qté</th>
+                    <th className="pb-1.5 text-right">P.U</th>
+                    <th className="pb-1.5 text-right">Total</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-neutral-100">
+                <tbody className="divide-y divide-neutral-300">
                   {transaction.items.map((it, idx) => (
                     <tr key={idx} className="py-1">
-                      <td className="pt-1 pr-1 font-medium truncate max-w-[130px]">{it.productName}</td>
-                      <td className="pt-1 text-center font-bold">{it.quantity}</td>
-                      <td className="pt-1 text-right tabular-nums">{it.unitPrice}</td>
-                      <td className="pt-1 text-right font-bold tabular-nums">{it.total}</td>
+                      <td className="pt-1.5 pr-1 font-bold text-black truncate max-w-[130px]">{it.productName}</td>
+                      <td className="pt-1.5 text-center font-black text-black">{it.quantity}</td>
+                      <td className="pt-1.5 text-right font-bold tabular-nums text-black">{it.unitPrice}</td>
+                      <td className="pt-1.5 text-right font-black tabular-nums text-black">{it.total}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -238,28 +239,28 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
             </div>
 
             {/* Totals */}
-            <div className="py-2.5 border-b border-dashed border-neutral-300 text-[11px] space-y-1">
+            <div className="py-2.5 border-b-2 border-dashed border-black text-xs font-bold text-black space-y-1">
               <div className="flex justify-between">
                 <span>Sous-total:</span>
-                <span className="tabular-nums">{transaction.subtotal} F</span>
+                <span className="tabular-nums font-black">{transaction.subtotal} F</span>
               </div>
               {transaction.discountTotal > 0 && (
-                <div className="flex justify-between text-emerald-700">
+                <div className="flex justify-between text-black">
                   <span>Remise accordée:</span>
-                  <span className="tabular-nums font-bold">-{transaction.discountTotal} F</span>
+                  <span className="tabular-nums font-black">-{transaction.discountTotal} F</span>
                 </div>
               )}
-              <div className="flex justify-between text-sm font-bold pt-1 border-t border-neutral-200 text-neutral-950">
+              <div className="flex justify-between text-base font-black pt-1.5 pb-1 border-y-2 border-black text-black">
                 <span>TOTAL À PAYER:</span>
-                <span className="tabular-nums">{formatMoney(transaction.totalAmount, 'F')}</span>
+                <span className="tabular-nums">{formatMoney(transaction.totalAmount, 'F CFA')}</span>
               </div>
             </div>
 
             {/* Payment details */}
-            <div className="py-2.5 border-b border-dashed border-neutral-300 text-[11px] space-y-0.5">
+            <div className="py-2.5 border-b-2 border-dashed border-black text-xs font-bold text-black space-y-1">
               <div className="flex justify-between">
                 <span>Mode de règlement:</span>
-                <span className="font-semibold">{paymentLabels[transaction.paymentMethod] || transaction.paymentMethod}</span>
+                <span className="font-black">{paymentLabels[transaction.paymentMethod] || transaction.paymentMethod}</span>
               </div>
               {transaction.paymentMethod === 'cash' && (
                 <>
@@ -267,24 +268,40 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
                     <span>Espèces reçues:</span>
                     <span className="tabular-nums font-bold">{formatMoney(transaction.amountReceived, 'F')}</span>
                   </div>
-                  <div className="flex justify-between font-bold text-neutral-950">
+                  <div className="flex justify-between font-black text-black">
                     <span>Monnaie rendue:</span>
                     <span className="tabular-nums">{formatMoney(transaction.changeDue, 'F')}</span>
                   </div>
                 </>
               )}
+              {transaction.paymentMethod === 'credit' && (
+                <div className="mt-2 p-2 border-2 border-black rounded text-[11px] font-bold text-black bg-neutral-50">
+                  <div className="text-center font-black uppercase tracking-wider text-black">*** VENTE À CRÉDIT (DETTE) ***</div>
+                  <div className="flex justify-between mt-1">
+                    <span>Titulaire du compte :</span>
+                    <span className="font-black">{transaction.customerName || 'Compte Client'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Porté au carnet :</span>
+                    <span className="font-black">{formatMoney(transaction.totalAmount, 'F CFA')}</span>
+                  </div>
+                  <div className="mt-3 pt-1 border-t border-dashed border-black text-right text-[10px]">
+                    Signature / Décharge Client : __________________
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Footer barcode & thanks */}
             <div className="pt-3 text-center space-y-2">
-              <div className="h-8 bg-neutral-900 text-white flex items-center justify-center tracking-widest font-mono text-[9px] rounded">
+              <div className="h-8 bg-black text-white flex items-center justify-center tracking-widest font-mono text-[11px] font-black rounded">
                 |||| || | ||||| ||| || |||||| || | ||||
               </div>
-              <p className="text-[10px] text-neutral-600 font-medium">
-                Merci de votre visite et à bientôt !
+              <p className="text-xs text-black font-extrabold">
+                Merci de votre visite et à très bientôt !
               </p>
-              <p className="text-[9px] text-neutral-500">
-                Caisse Pro v2.4 · Caisse Tactile & Gestion Commerciale
+              <p className="text-[11px] text-black font-bold">
+                Caisse Pro v2.4 · Reçu officiel de vente
               </p>
             </div>
           </div>

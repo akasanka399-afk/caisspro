@@ -17,13 +17,15 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
     .map(
       (it) => `
       <tr>
-        <td style="padding: 3px 0; vertical-align: top; font-weight: 600;">
-          ${escapeHtml(it.productName)}
-          <div style="font-size: 10px; color: #444; font-weight: normal;">
+        <td style="padding: 4px 0; vertical-align: top;">
+          <div style="font-size: 13.5px; font-weight: 800; color: #000000; line-height: 1.25;">
+            ${escapeHtml(it.productName)}
+          </div>
+          <div style="font-size: 12px; font-weight: 700; color: #000000; margin-top: 1px;">
             ${it.quantity} x ${formatMoney(it.unitPrice, 'F')}
           </div>
         </td>
-        <td style="padding: 3px 0; text-align: right; vertical-align: top; font-weight: bold; white-space: nowrap;">
+        <td style="padding: 4px 0; text-align: right; vertical-align: top; font-size: 13.5px; font-weight: 900; color: #000000; white-space: nowrap;">
           ${formatMoney(it.total, 'F')}
         </td>
       </tr>
@@ -47,90 +49,115 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
     html, body {
       margin: 0;
       padding: 0;
-      background: #ffffff;
-      color: #000000;
-      font-family: 'Courier New', Courier, 'Lucida Console', Monaco, monospace;
-      font-size: 11px;
-      line-height: 1.35;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
+      background: #ffffff !important;
+      color: #000000 !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'DejaVu Sans Mono', Arial, sans-serif, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.38;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
     }
     .receipt-container {
       width: 76mm;
       max-width: 100%;
       margin: 0 auto;
-      padding: 4mm 3mm 8mm 3mm;
+      padding: 4mm 2.5mm 8mm 2.5mm;
+      color: #000000 !important;
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
     .text-left { text-align: left; }
-    .bold { font-weight: bold; }
+    .bold { font-weight: 900 !important; }
     .uppercase { text-transform: uppercase; }
     .store-name {
-      font-size: 15px;
+      font-size: 18px;
       font-weight: 900;
       letter-spacing: 0.5px;
-      margin: 0 0 2px 0;
+      margin: 0 0 3px 0;
+      line-height: 1.2;
+      color: #000000 !important;
+    }
+    .store-meta {
+      font-size: 12px;
+      font-weight: 700;
+      color: #000000 !important;
+      line-height: 1.3;
     }
     .divider-solid {
-      border-top: 1px solid #000;
+      border-top: 2.5px solid #000000 !important;
       margin: 6px 0;
     }
     .divider-dashed {
-      border-top: 1px dashed #000;
+      border-top: 2px dashed #000000 !important;
       margin: 6px 0;
     }
     .divider-double {
-      border-top: 2px dashed #000;
+      border-top: 3.5px double #000000 !important;
       margin: 6px 0;
     }
     .row {
       display: flex;
       justify-content: space-between;
-      margin: 1.5px 0;
+      margin: 2px 0;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #000000 !important;
     }
     .items-table {
       width: 100%;
       border-collapse: collapse;
-      margin: 4px 0;
-      font-size: 11px;
+      margin: 5px 0;
+      font-size: 13px;
+      color: #000000 !important;
     }
     .items-table th {
-      border-bottom: 1px solid #000;
-      padding-bottom: 3px;
-      font-weight: bold;
+      border-bottom: 2px solid #000000 !important;
+      padding-bottom: 4px;
+      font-weight: 900 !important;
+      font-size: 12.5px;
+      text-transform: uppercase;
+      color: #000000 !important;
     }
     .total-box {
-      margin-top: 4px;
-      padding-top: 4px;
-      border-top: 1px dashed #000;
+      margin-top: 5px;
+      padding-top: 5px;
+      border-top: 2px dashed #000000 !important;
+      color: #000000 !important;
     }
     .grand-total {
-      font-size: 14px;
-      font-weight: 900;
+      font-size: 18px;
+      font-weight: 900 !important;
       display: flex;
       justify-content: space-between;
-      margin: 4px 0;
-      padding: 4px 0;
-      border-top: 1px solid #000;
-      border-bottom: 1px solid #000;
+      align-items: center;
+      margin: 6px 0;
+      padding: 6px 0;
+      border-top: 2.5px solid #000000 !important;
+      border-bottom: 2.5px solid #000000 !important;
+      color: #000000 !important;
+      letter-spacing: 0.3px;
     }
     .barcode-box {
-      font-family: 'Courier New', monospace;
-      letter-spacing: 3px;
-      font-size: 11px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      letter-spacing: 4px;
+      font-size: 13px;
       text-align: center;
       padding: 4px;
       margin: 6px 0 2px 0;
-      background: #000;
-      color: #fff;
-      font-weight: bold;
+      background: #000000 !important;
+      color: #ffffff !important;
+      font-weight: 900 !important;
     }
     .footer-note {
-      font-size: 9.5px;
+      font-size: 11.5px;
+      font-weight: 800;
       text-align: center;
-      margin-top: 6px;
-      line-height: 1.3;
+      margin-top: 8px;
+      line-height: 1.35;
+      color: #000000 !important;
     }
     @media screen {
       body {
@@ -178,9 +205,9 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
     <!-- Store Header -->
     <div class="text-center">
       <div class="store-name uppercase">${escapeHtml(business.name)}</div>
-      ${business.address ? `<div>${escapeHtml(business.address)}</div>` : ''}
-      ${business.phone ? `<div>Tél: ${escapeHtml(business.phone)}</div>` : ''}
-      <div style="font-size: 9px; margin-top: 2px;">Commerce Enregistré · Système Caisse Pro</div>
+      ${business.address ? `<div class="store-meta">${escapeHtml(business.address)}</div>` : ''}
+      ${business.phone ? `<div class="store-meta">Tél: ${escapeHtml(business.phone)}</div>` : ''}
+      <div style="font-size: 11.5px; font-weight: 800; color: #000000; margin-top: 2px;">Commerce Enregistré · Système Caisse Pro</div>
     </div>
 
     <div class="divider-solid"></div>
@@ -192,7 +219,7 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
     </div>
     <div class="row">
       <span>Date:</span>
-      <span>${escapeHtml(formatDate(transaction.timestamp))}</span>
+      <span class="bold">${escapeHtml(formatDate(transaction.timestamp))}</span>
     </div>
     <div class="row">
       <span>Caissier(ère):</span>
@@ -206,7 +233,7 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
       transaction.customerPhone
         ? `<div class="row">
             <span>Tél. Client:</span>
-            <span>${escapeHtml(transaction.customerPhone)}</span>
+            <span class="bold">${escapeHtml(transaction.customerPhone)}</span>
           </div>`
         : ''
     }
@@ -234,7 +261,7 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
       </div>
       ${
         transaction.discountTotal > 0
-          ? `<div class="row" style="color: #000;">
+          ? `<div class="row" style="color: #000000 !important;">
               <span>Remise accordée:</span>
               <span class="bold">-${formatMoney(transaction.discountTotal, 'F')}</span>
             </div>`
@@ -252,11 +279,26 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
         transaction.paymentMethod === 'cash'
           ? `<div class="row">
               <span>Espèces reçues:</span>
-              <span>${formatMoney(transaction.amountReceived, 'F')}</span>
+              <span class="bold">${formatMoney(transaction.amountReceived, 'F')}</span>
             </div>
             <div class="row">
               <span class="bold">Monnaie rendue:</span>
               <span class="bold">${formatMoney(transaction.changeDue, 'F')}</span>
+            </div>`
+          : transaction.paymentMethod === 'credit'
+          ? `<div style="margin-top: 6px; padding: 6px; border: 2px solid #000000; font-size: 11.5px; background: #ffffff; color: #000000;">
+              <div style="font-weight: 900; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; color: #000000;">*** VENTE À CRÉDIT (DETTE) ***</div>
+              <div class="row" style="margin-top: 4px;">
+                <span>Titulaire du compte :</span>
+                <span class="bold">${escapeHtml(transaction.customerName || 'Compte Client')}</span>
+              </div>
+              <div class="row">
+                <span>Porté au carnet :</span>
+                <span class="bold">${formatMoney(transaction.totalAmount, 'F CFA')}</span>
+              </div>
+              <div style="margin-top: 10px; border-top: 2px dashed #000000; padding-top: 4px; font-size: 10.5px; font-weight: 800; text-align: right; color: #000000;">
+                Signature / Décharge Client : __________________
+              </div>
             </div>`
           : ''
       }
@@ -268,14 +310,14 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
     <div class="barcode-box">
       |||| | ||||| || |||||| | ||||
     </div>
-    <div class="text-center" style="font-size: 9px; letter-spacing: 1px;">
+    <div class="text-center" style="font-size: 11.5px; font-weight: 800; letter-spacing: 1px; color: #000000; margin-top: 2px;">
       ${escapeHtml(transaction.ticketNumber)}
     </div>
 
     <!-- Thank you note -->
     <div class="footer-note">
-      <div class="bold">Merci de votre visite et à très bientôt !</div>
-      <div style="font-size: 8.5px; color: #555; margin-top: 3px;">
+      <div class="bold" style="font-size: 12.5px; color: #000000;">Merci de votre visite et à très bientôt !</div>
+      <div style="font-size: 11px; font-weight: 800; color: #000000; margin-top: 3px;">
         Logiciel Caisse Pro · Reçu officiel de vente
       </div>
     </div>

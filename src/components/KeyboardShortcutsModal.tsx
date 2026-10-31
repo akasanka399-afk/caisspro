@@ -17,7 +17,7 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({ 
     { key: '↓ / ↑', desc: 'Dans le champ libellé : Défiler les modèles d\'articles sans la souris' },
     { key: 'F7', desc: 'Caisse Rapide : Augmenter la quantité d\'articles (+1)' },
     { key: '+', desc: 'Caisse Rapide : Ajouter montant et quantité au ticket cumulé' },
-    { key: 'F3', desc: 'Catalogue : Scanner ou saisir un code-barres' },
+    { key: 'F3', desc: 'Ouvrir le lecteur de code-barres Caméra (ou douchette USB directe)' },
     { key: 'F4', desc: 'Sélectionner ou saisir le client (figurera sur le reçu)' },
     { key: 'F5', desc: 'Basculer entre Caisse Rapide et Catalogue' },
     { key: 'F8', desc: 'Catalogue : Appliquer une remise sur le ticket' },
