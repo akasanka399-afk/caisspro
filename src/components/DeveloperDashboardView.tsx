@@ -27,10 +27,28 @@ import {
   Key,
   QrCode,
   WifiOff,
+  Eye,
+  EyeOff,
+  Smartphone,
+  Share2,
 } from 'lucide-react';
 
 interface DeveloperDashboardViewProps {
   currentUser: User;
+}
+
+export interface CredentialsHandoverData {
+  businessName: string;
+  tradeType: string;
+  accessCode: string;
+  ownerName: string;
+  ownerPhone?: string;
+  ownerEmail?: string;
+  ownerPin: string;
+  cashierName: string;
+  cashierPin: string;
+  subscriptionPlan: string;
+  createdAt?: string;
 }
 
 export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ currentUser }) => {
@@ -53,16 +71,29 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
   const [generatedPassword, setGeneratedPassword] = useState<string>('');
   const [resetPinSuccess, setResetPinSuccess] = useState<boolean>(false);
 
-  // Business edit modal
+  // Business creation & edit modal
   const [showAddBizModal, setShowAddBizModal] = useState<boolean>(false);
 
-  // New business form
+  // New business form fields
   const [newBizName, setNewBizName] = useState<string>('');
   const [newBizTrade, setNewBizTrade] = useState<string>('Télécom');
   const [newBizPhone, setNewBizPhone] = useState<string>('');
   const [newBizAddress, setNewBizAddress] = useState<string>('');
   const [newBizOwner, setNewBizOwner] = useState<string>('');
+  const [newBizOwnerPhone, setNewBizOwnerPhone] = useState<string>('');
+  const [newBizOwnerEmail, setNewBizOwnerEmail] = useState<string>('');
   const [newBizPlan, setNewBizPlan] = useState<SubscriptionPlan>('pro');
+
+  // Connection code & Owner default PIN generation
+  const [newBizAccessCode, setNewBizAccessCode] = useState<string>('');
+  const [newBizOwnerPin, setNewBizOwnerPin] = useState<string>('');
+  const [newBizCashierPin, setNewBizCashierPin] = useState<string>('0000');
+  const [showOwnerPinInForm, setShowOwnerPinInForm] = useState<boolean>(true);
+  const [copiedCodeNotice, setCopiedCodeNotice] = useState<string | null>(null);
+
+  // Credentials handover modal state
+  const [handoverData, setHandoverData] = useState<CredentialsHandoverData | null>(null);
+  const [copiedHandover, setCopiedHandover] = useState<boolean>(false);
 
   // Push broadcast modal
   const [showBroadcastModal, setShowBroadcastModal] = useState<boolean>(false);
@@ -138,7 +169,42 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
     alert(`Abonnement de "${biz.name}" renouvelé avec succès jusqu'au ${nextYear.toLocaleDateString('fr-FR')}.`);
   };
 
-  // Add new business
+  // Open modal with pre-generated connection code and owner default PIN
+  const handleOpenAddBizModal = () => {
+    setNewBizName('');
+    setNewBizTrade('Télécom');
+    setNewBizPhone('');
+    setNewBizAddress('');
+    setNewBizOwner('');
+    setNewBizOwnerPhone('');
+    setNewBizOwnerEmail('');
+    setNewBizPlan('pro');
+    setNewBizAccessCode(store.generateAccessCodeString());
+    setNewBizOwnerPin(store.generateOwnerPinString());
+    setNewBizCashierPin('0000');
+    setShowOwnerPinInForm(true);
+    setCopiedCodeNotice(null);
+    setShowAddBizModal(true);
+  };
+
+  const handleRegenFormAccessCode = () => {
+    setNewBizAccessCode(store.generateAccessCodeString());
+    playSoundEffect('beep');
+  };
+
+  const handleRegenFormOwnerPin = () => {
+    setNewBizOwnerPin(store.generateOwnerPinString());
+    playSoundEffect('beep');
+  };
+
+  const handleCopyInputCode = (code: string, label: string) => {
+    navigator.clipboard?.writeText(code);
+    setCopiedCodeNotice(label);
+    playSoundEffect('beep');
+    setTimeout(() => setCopiedCodeNotice(null), 2000);
+  };
+
+  // Add new business with connection code and owner default PIN
   const handleCreateBusiness = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBizName.trim()) return;
@@ -146,22 +212,89 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
     const expDate = new Date();
     expDate.setMonth(expDate.getMonth() + 12);
 
-    const newCreatedBiz = store.addBusiness({
+    const createdBiz = store.addBusiness({
       name: newBizName.trim(),
       tradeType: newBizTrade,
       currency: 'FCFA',
-      phone: newBizPhone.trim() || '+225 00 00 00 00',
+      phone: newBizPhone.trim() || newBizOwnerPhone.trim() || '+225 00 00 00 00',
       address: newBizAddress.trim() || 'Abidjan, Côte d\'Ivoire',
       ownerName: newBizOwner.trim() || 'Propriétaire',
+      ownerPhone: newBizOwnerPhone.trim() || newBizPhone.trim(),
+      ownerEmail: newBizOwnerEmail.trim(),
       subscriptionPlan: newBizPlan,
       subscriptionStatus: 'active',
       subscriptionExpiresAt: expDate.toISOString().slice(0, 10),
+      accessCode: newBizAccessCode.trim(),
+      ownerPin: newBizOwnerPin.trim(),
+      cashierPin: newBizCashierPin.trim() || '0000',
     });
 
     setShowAddBizModal(false);
-    setNewBizName('');
     playSoundEffect('cash');
-    alert(`Nouveau commerce "${newCreatedBiz.name}" enregistré avec succès !\n\nCode d'accès session généré : ${newCreatedBiz.accessCode}\nTransmettez ce code au caissier pour sa connexion en ligne ou hors-ligne.`);
+
+    // Open credentials handover modal for immediate sharing / testing
+    setHandoverData({
+      businessName: createdBiz.name,
+      tradeType: createdBiz.tradeType,
+      accessCode: createdBiz.generatedAccessCode,
+      ownerName: createdBiz.ownerUser.name,
+      ownerPhone: createdBiz.ownerUser.phone,
+      ownerEmail: createdBiz.ownerUser.email,
+      ownerPin: createdBiz.generatedOwnerPin,
+      cashierName: createdBiz.cashierUser.name,
+      cashierPin: createdBiz.generatedCashierPin,
+      subscriptionPlan: createdBiz.subscriptionPlan,
+      createdAt: createdBiz.createdAt,
+    });
+  };
+
+  // View existing business credentials
+  const handleViewBusinessCredentials = (biz: Business) => {
+    const creds = store.getBusinessCredentials(biz.id);
+    const owner = creds.owner;
+    const cashier = creds.cashiers[0];
+
+    setHandoverData({
+      businessName: biz.name,
+      tradeType: biz.tradeType,
+      accessCode: biz.accessCode,
+      ownerName: owner?.name || `${biz.ownerName} (Propriétaire)`,
+      ownerPhone: owner?.phone || biz.phone,
+      ownerEmail: owner?.email,
+      ownerPin: owner?.pinCode || '1234',
+      cashierName: cashier?.name || 'Caissier(ère) 1',
+      cashierPin: cashier?.pinCode || '0000',
+      subscriptionPlan: biz.subscriptionPlan,
+      createdAt: biz.createdAt,
+    });
+    playSoundEffect('beep');
+  };
+
+  const handleCopyHandoverText = (data: CredentialsHandoverData) => {
+    const text = `🏪 ACCÈS OFFICIEL CAISSE PRO - ${data.businessName.toUpperCase()}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Votre commerce est activé avec succès sur la plateforme Caisse Pro.
+
+🔑 CODE DE CONNEXION CAISSE : ${data.accessCode}
+(Saisissez ce code pour ouvrir votre session en ligne ou hors-ligne PWA)
+
+👤 COMPTE PROPRIÉTAIRE :
+• Titulaire : ${data.ownerName}
+• Code PIN par défaut : ${data.ownerPin}
+(Accès sécurisé au tableau de bord, chiffre d'affaires, stocks et gestion de l'équipe)
+
+👩‍💼 COMPTE CAISSIER :
+• Titulaire : ${data.cashierName}
+• Code PIN Caissier : ${data.cashierPin}
+(Accès direct aux encaissements et tickets de caisse)
+
+🌐 Application Caisse Pro : Prête à l'encaissement
+💡 Conseil : Vous pouvez modifier vos codes PIN à tout moment depuis les paramètres de votre compte.`;
+
+    navigator.clipboard?.writeText(text);
+    setCopiedHandover(true);
+    playSoundEffect('cash');
+    setTimeout(() => setCopiedHandover(false), 3000);
   };
 
   // Send Broadcast Push Notification
@@ -643,7 +776,7 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
               </div>
             </div>
             <button
-              onClick={() => setShowAddBizModal(true)}
+              onClick={handleOpenAddBizModal}
               className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shrink-0 shadow-sm transition-all"
             >
               <Plus className="w-4 h-4" />
@@ -772,8 +905,20 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
+                              onClick={() => handleViewBusinessCredentials(b)}
+                              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors inline-flex items-center gap-1 ${
+                                isLight
+                                  ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
+                                  : 'bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 border border-amber-500/40'
+                              }`}
+                              title="Consulter et partager les identifiants (Code Connexion & PIN Propriétaire)"
+                            >
+                              <Key className="w-3 h-3" />
+                              <span>Identifiants</span>
+                            </button>
+                            <button
                               onClick={() => handleRenewSubscription(b)}
-                              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${
+                              className={`px-2 py-1 rounded text-[11px] font-bold transition-colors ${
                                 isLight
                                   ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300'
                                   : 'bg-neutral-800 hover:bg-neutral-700 text-emerald-400'
@@ -1058,118 +1203,512 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
         </div>
       )}
 
-      {/* Modal: Add New Business */}
+      {/* Modal: Add New Business with Auto-Generated Connection Code & Owner Default PIN */}
       {showAddBizModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className={`rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl border ${
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className={`rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border my-8 ${
             isLight ? 'retail-card bg-white border-slate-300' : 'neon-card bg-neutral-900 border-neutral-800'
           }`}>
-            <div className={`flex items-center justify-between pb-2 border-b ${
+            <div className={`flex items-center justify-between pb-3 border-b ${
               isLight ? 'border-slate-200' : 'border-neutral-800'
             }`}>
-              <h3 className={`text-base font-bold flex items-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                <Building2 className="w-4 h-4 text-purple-500" />
-                <span>Enregistrer un Nouveau Commerce</span>
-              </h3>
+              <div className="flex items-center gap-2.5">
+                <div className={`p-2 rounded-xl ${
+                  isLight ? 'bg-purple-100 text-purple-700' : 'bg-purple-500/20 text-purple-400'
+                }`}>
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className={`text-base font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                    Déployer un Nouveau Commerce
+                  </h3>
+                  <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                    Génération automatique du code de connexion et du code PIN propriétaire
+                  </p>
+                </div>
+              </div>
               <button
+                type="button"
                 onClick={() => setShowAddBizModal(false)}
-                className={`p-1 rounded ${isLight ? 'text-slate-400 hover:text-slate-700' : 'text-neutral-400 hover:text-white'}`}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  isLight ? 'text-slate-400 hover:text-slate-700 hover:bg-slate-100' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+                }`}
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleCreateBusiness} className="space-y-3 text-xs">
-              <div>
-                <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>
-                  Nom commercial de l'établissement
-                </label>
-                <input
-                  type="text"
-                  value={newBizName}
-                  onChange={(e) => setNewBizName(e.target.value)}
-                  placeholder="Ex: Épicerie Moderne Riviera"
-                  required
-                  className={`w-full px-3 py-2 rounded-lg transition-colors ${
-                    isLight
-                      ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
-                      : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
-                  }`}
-                  autoFocus
-                />
+            <form onSubmit={handleCreateBusiness} className="space-y-4 text-xs">
+              {/* Highlight Box: Auto-Generated Connection Code & Owner PIN */}
+              <div className={`p-3.5 rounded-xl border space-y-3 ${
+                isLight
+                  ? 'bg-amber-50/70 border-amber-200 text-slate-800'
+                  : 'bg-amber-950/20 border-amber-500/30 text-amber-100'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <span className="font-bold flex items-center gap-1.5 text-xs text-amber-900 dark:text-amber-200 uppercase tracking-wider">
+                    <Key className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                    <span>Identifiants de Sécurité Générés par Défaut</span>
+                  </span>
+                  {copiedCodeNotice && (
+                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-300">
+                      {copiedCodeNotice} copié !
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Generated Connection Code */}
+                  <div className={`p-2.5 rounded-lg border space-y-1.5 ${
+                    isLight ? 'bg-white border-amber-200' : 'bg-neutral-950 border-amber-500/30'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <label className={`text-[11px] font-bold ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>
+                        Code Connexion Commerce
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={handleRegenFormAccessCode}
+                          className={`p-1 rounded transition-colors ${
+                            isLight ? 'hover:bg-slate-100 text-slate-500' : 'hover:bg-neutral-800 text-neutral-400'
+                          }`}
+                          title="Régénérer un autre code"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyInputCode(newBizAccessCode, 'Code connexion')}
+                          className={`p-1 rounded transition-colors ${
+                            isLight ? 'hover:bg-slate-100 text-slate-500' : 'hover:bg-neutral-800 text-neutral-400'
+                          }`}
+                          title="Copier le code"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={newBizAccessCode}
+                        onChange={(e) => setNewBizAccessCode(e.target.value.toUpperCase())}
+                        required
+                        className={`w-full font-mono font-bold text-sm tracking-wider px-2.5 py-1.5 rounded border ${
+                          isLight
+                            ? 'bg-amber-50 text-amber-950 border-amber-300'
+                            : 'bg-neutral-900 text-amber-300 border-amber-500/40'
+                        }`}
+                        placeholder="CP-8842"
+                      />
+                    </div>
+                    <p className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                      Code unique pour la session caisse (en ligne et PWA hors-ligne).
+                    </p>
+                  </div>
+
+                  {/* Generated Owner Default PIN */}
+                  <div className={`p-2.5 rounded-lg border space-y-1.5 ${
+                    isLight ? 'bg-white border-amber-200' : 'bg-neutral-950 border-amber-500/30'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <label className={`text-[11px] font-bold ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>
+                        Code PIN Propriétaire par Défaut
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setShowOwnerPinInForm(!showOwnerPinInForm)}
+                          className={`p-1 rounded transition-colors ${
+                            isLight ? 'hover:bg-slate-100 text-slate-500' : 'hover:bg-neutral-800 text-neutral-400'
+                          }`}
+                          title={showOwnerPinInForm ? 'Masquer le PIN' : 'Afficher le PIN'}
+                        >
+                          {showOwnerPinInForm ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRegenFormOwnerPin}
+                          className={`p-1 rounded transition-colors ${
+                            isLight ? 'hover:bg-slate-100 text-slate-500' : 'hover:bg-neutral-800 text-neutral-400'
+                          }`}
+                          title="Régénérer un autre code PIN"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyInputCode(newBizOwnerPin, 'PIN propriétaire')}
+                          className={`p-1 rounded transition-colors ${
+                            isLight ? 'hover:bg-slate-100 text-slate-500' : 'hover:bg-neutral-800 text-neutral-400'
+                          }`}
+                          title="Copier le PIN"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type={showOwnerPinInForm ? 'text' : 'password'}
+                        value={newBizOwnerPin}
+                        onChange={(e) => setNewBizOwnerPin(e.target.value)}
+                        required
+                        maxLength={8}
+                        className={`w-full font-mono font-bold text-sm tracking-widest px-2.5 py-1.5 rounded border ${
+                          isLight
+                            ? 'bg-amber-50 text-amber-950 border-amber-300'
+                            : 'bg-neutral-900 text-amber-300 border-amber-500/40'
+                        }`}
+                        placeholder="4 chiffres"
+                      />
+                    </div>
+                    <p className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                      Permet au propriétaire d'accéder au dashboard et gérer l'équipe.
+                    </p>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>Secteur d'activité</label>
-                <select
-                  value={newBizTrade}
-                  onChange={(e) => setNewBizTrade(e.target.value)}
-                  className={`w-full px-3 py-2 rounded-lg transition-colors ${
-                    isLight
-                      ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
-                      : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
-                  }`}
-                >
-                  <option value="Télécom">Télécom</option>
-                  <option value="Alimentation & Épicerie">Alimentation & Épicerie</option>
-                  <option value="Santé & Pharmacie">Santé & Pharmacie</option>
-                  <option value="Prêt-à-porter & Mode">Prêt-à-porter & Mode</option>
-                  <option value="Quincaillerie & Outillage">Quincaillerie & Outillage</option>
-                  <option value="Cosmétique & Beauté">Cosmétique & Beauté</option>
-                </select>
-              </div>
+              {/* Establishment Details */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>
+                    Nom commercial de l'établissement *
+                  </label>
+                  <input
+                    type="text"
+                    value={newBizName}
+                    onChange={(e) => setNewBizName(e.target.value)}
+                    placeholder="Ex: Épicerie Moderne Riviera"
+                    required
+                    className={`w-full px-3 py-2 rounded-lg transition-colors ${
+                      isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
+                        : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
+                    }`}
+                    autoFocus
+                  />
+                </div>
 
-              <div>
-                <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>Nom du Propriétaire / Gérant</label>
-                <input
-                  type="text"
-                  value={newBizOwner}
-                  onChange={(e) => setNewBizOwner(e.target.value)}
-                  placeholder="Ex: M. Jean Kouassi"
-                  required
-                  className={`w-full px-3 py-2 rounded-lg transition-colors ${
-                    isLight
-                      ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
-                      : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
-                  }`}
-                />
-              </div>
+                <div>
+                  <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>
+                    Secteur d'activité *
+                  </label>
+                  <select
+                    value={newBizTrade}
+                    onChange={(e) => setNewBizTrade(e.target.value)}
+                    className={`w-full px-3 py-2 rounded-lg transition-colors ${
+                      isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
+                        : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
+                    }`}
+                  >
+                    <option value="Télécom">Télécom & Services Digitaux</option>
+                    <option value="Alimentation & Épicerie">Alimentation & Épicerie</option>
+                    <option value="Santé & Pharmacie">Santé & Pharmacie</option>
+                    <option value="Prêt-à-porter & Mode">Prêt-à-porter & Mode</option>
+                    <option value="Quincaillerie & Outillage">Quincaillerie & Outillage</option>
+                    <option value="Cosmétique & Beauté">Cosmétique & Beauté</option>
+                    <option value="Restauration & Fast-Food">Restauration & Fast-Food</option>
+                  </select>
+                </div>
 
-              <div>
-                <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>Formule d'Abonnement Caisse Pro</label>
-                <select
-                  value={newBizPlan}
-                  onChange={(e) => setNewBizPlan(e.target.value as SubscriptionPlan)}
-                  className={`w-full px-3 py-2 rounded-lg transition-colors ${
-                    isLight
-                      ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
-                      : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
-                  }`}
-                >
-                  <option value="starter">Starter (Idéal micro-commerce)</option>
-                  <option value="pro">Pack Pro (Recommandé - multi-caissiers)</option>
-                  <option value="enterprise">Enterprise (Illimité & Support 24/7)</option>
-                </select>
+                <div>
+                  <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>
+                    Formule d'Abonnement Caisse Pro *
+                  </label>
+                  <select
+                    value={newBizPlan}
+                    onChange={(e) => setNewBizPlan(e.target.value as SubscriptionPlan)}
+                    className={`w-full px-3 py-2 rounded-lg transition-colors ${
+                      isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
+                        : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
+                    }`}
+                  >
+                    <option value="starter">Starter (1 caisse)</option>
+                    <option value="pro">Pack Pro (Recommandé - multi-caissiers)</option>
+                    <option value="enterprise">Enterprise (Illimité & Support 24/7)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>
+                    Nom complet du Propriétaire / Gérant *
+                  </label>
+                  <input
+                    type="text"
+                    value={newBizOwner}
+                    onChange={(e) => setNewBizOwner(e.target.value)}
+                    placeholder="Ex: M. Jean Kouassi"
+                    required
+                    className={`w-full px-3 py-2 rounded-lg transition-colors ${
+                      isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
+                        : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>
+                    Téléphone du Propriétaire
+                  </label>
+                  <input
+                    type="tel"
+                    value={newBizPhone}
+                    onChange={(e) => setNewBizPhone(e.target.value)}
+                    placeholder="Ex: +225 07 12 34 56 78"
+                    className={`w-full px-3 py-2 rounded-lg transition-colors ${
+                      isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
+                        : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
+                    }`}
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>
+                    Adresse & Localisation du Commerce
+                  </label>
+                  <input
+                    type="text"
+                    value={newBizAddress}
+                    onChange={(e) => setNewBizAddress(e.target.value)}
+                    placeholder="Ex: Boulevard Latrille, Angré 8ème Tranche, Abidjan"
+                    className={`w-full px-3 py-2 rounded-lg transition-colors ${
+                      isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
+                        : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>
+                    PIN Caissier Initial (Optionnel)
+                  </label>
+                  <input
+                    type="text"
+                    value={newBizCashierPin}
+                    onChange={(e) => setNewBizCashierPin(e.target.value)}
+                    maxLength={6}
+                    placeholder="0000"
+                    className={`w-full font-mono px-3 py-2 rounded-lg transition-colors ${
+                      isLight
+                        ? 'bg-white border border-slate-300 text-slate-900 focus:outline-hidden focus:border-purple-600'
+                        : 'bg-neutral-950 border border-neutral-800 text-white focus:outline-hidden focus:border-purple-500'
+                    }`}
+                  />
+                  <p className={`text-[10px] mt-0.5 ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                    Pour le compte Caissier(ère) 1 créé automatiquement.
+                  </p>
+                </div>
               </div>
 
               <div className={`pt-3 flex justify-end gap-2 border-t ${isLight ? 'border-slate-200' : 'border-neutral-800'}`}>
                 <button
                   type="button"
                   onClick={() => setShowAddBizModal(false)}
-                  className={`px-4 py-2 rounded-lg font-medium ${
-                    isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-neutral-800 text-neutral-300'
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'
                   }`}
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg shadow-sm"
+                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg shadow-sm flex items-center gap-1.5 transition-all"
                 >
-                  Déployer le Commerce
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Déployer & Activer le Commerce</span>
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Credentials Handover Card (Fiche Récapitulative des Accès Officiels) */}
+      {handoverData && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className={`rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border ${
+            isLight ? 'retail-card bg-white border-slate-300' : 'neon-card bg-[#0a0e1e] border-neutral-800'
+          }`}>
+            <div className={`flex items-center justify-between pb-3 border-b ${
+              isLight ? 'border-slate-200' : 'border-neutral-800'
+            }`}>
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                </div>
+                <div>
+                  <h3 className={`text-base font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                    Fiche d'Accès Officielle
+                  </h3>
+                  <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                    {handoverData.businessName} · Prêt à l'encaissement
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHandoverData(null)}
+                className={`p-1.5 rounded-lg transition-colors ${
+                  isLight ? 'text-slate-400 hover:text-slate-700 hover:bg-slate-100' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+                }`}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Credentials Card Summary */}
+            <div className={`p-4 rounded-xl space-y-3.5 border ${
+              isLight ? 'bg-slate-50 border-slate-200' : 'bg-neutral-950 border-neutral-800'
+            }`}>
+              {/* Store Access Code */}
+              <div className={`p-3 rounded-lg border flex items-center justify-between gap-3 ${
+                isLight ? 'bg-amber-50/80 border-amber-300' : 'bg-amber-950/30 border-amber-500/40'
+              }`}>
+                <div>
+                  <span className={`text-[10px] uppercase font-bold tracking-wider block ${
+                    isLight ? 'text-amber-800' : 'text-amber-300'
+                  }`}>
+                    Code de Connexion Commerce (Session)
+                  </span>
+                  <span className={`font-mono text-xl font-black tracking-widest ${
+                    isLight ? 'text-amber-950' : 'text-amber-200'
+                  }`}>
+                    {handoverData.accessCode}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopyInputCode(handoverData.accessCode, 'Code connexion')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${
+                    isLight
+                      ? 'bg-amber-200 hover:bg-amber-300 text-amber-900'
+                      : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40'
+                  }`}
+                  title="Copier le code"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copier</span>
+                </button>
+              </div>
+
+              {/* Owner Account & PIN */}
+              <div className={`p-3 rounded-lg border flex items-center justify-between gap-3 ${
+                isLight ? 'bg-purple-50/80 border-purple-200' : 'bg-purple-950/20 border-purple-500/30'
+              }`}>
+                <div className="space-y-0.5">
+                  <span className={`text-[10px] uppercase font-bold tracking-wider block ${
+                    isLight ? 'text-purple-800' : 'text-purple-300'
+                  }`}>
+                    Compte Propriétaire
+                  </span>
+                  <div className={`text-xs font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                    {handoverData.ownerName}
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`text-[11px] font-semibold ${isLight ? 'text-slate-600' : 'text-neutral-400'}`}>
+                      Code PIN par défaut :
+                    </span>
+                    <span className={`font-mono font-black text-sm px-2 py-0.5 rounded border tracking-wider ${
+                      isLight ? 'bg-white text-purple-900 border-purple-300' : 'bg-neutral-900 text-purple-300 border-purple-500/40'
+                    }`}>
+                      {handoverData.ownerPin}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopyInputCode(handoverData.ownerPin, 'PIN Propriétaire')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${
+                    isLight
+                      ? 'bg-purple-100 hover:bg-purple-200 text-purple-900'
+                      : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40'
+                  }`}
+                  title="Copier le PIN propriétaire"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copier PIN</span>
+                </button>
+              </div>
+
+              {/* Cashier Account & PIN */}
+              <div className={`p-3 rounded-lg border flex items-center justify-between gap-3 ${
+                isLight ? 'bg-slate-100/80 border-slate-300' : 'bg-neutral-900/60 border-neutral-800'
+              }`}>
+                <div className="space-y-0.5">
+                  <span className={`text-[10px] uppercase font-bold tracking-wider block ${
+                    isLight ? 'text-slate-600' : 'text-neutral-400'
+                  }`}>
+                    Compte Caissier par Défaut
+                  </span>
+                  <div className={`text-xs font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                    {handoverData.cashierName}
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`text-[11px] font-semibold ${isLight ? 'text-slate-600' : 'text-neutral-400'}`}>
+                      Code PIN Caissier :
+                    </span>
+                    <span className={`font-mono font-black text-sm px-2 py-0.5 rounded border tracking-wider ${
+                      isLight ? 'bg-white text-slate-900 border-slate-300' : 'bg-neutral-950 text-neutral-200 border-neutral-700'
+                    }`}>
+                      {handoverData.cashierPin}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopyInputCode(handoverData.cashierPin, 'PIN Caissier')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all ${
+                    isLight
+                      ? 'bg-slate-200 hover:bg-slate-300 text-slate-800'
+                      : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700'
+                  }`}
+                  title="Copier le PIN caissier"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copier PIN</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Note & WhatsApp Share Button */}
+            <div className="space-y-3 pt-1">
+              <button
+                type="button"
+                onClick={() => handleCopyHandoverText(handoverData)}
+                className={`w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer ${
+                  copiedHandover
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                }`}
+              >
+                {copiedHandover ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
+                <span>
+                  {copiedHandover
+                    ? 'Fiche complète copiée au presse-papier !'
+                    : 'Copier la Fiche Complète pour le Commerçant (WhatsApp / SMS)'}
+                </span>
+              </button>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setHandoverData(null)}
+                  className={`px-4 py-2 rounded-lg font-semibold text-xs transition-colors ${
+                    isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'
+                  }`}
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

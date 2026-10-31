@@ -7,6 +7,8 @@ import {
   PushNotification,
   SaleTransaction,
   StockMovement,
+  SubscriptionPlan,
+  SubscriptionStatus,
   User,
   UserRole,
 } from '../types';
@@ -946,6 +948,27 @@ class StoreService {
     return `CP-${num}`;
   }
 
+  public generateOwnerPinString(): string {
+    const pin = Math.floor(1000 + Math.random() * 9000).toString();
+    return pin;
+  }
+
+  public getBusinessCredentials(businessId: string): {
+    business?: Business;
+    owner?: User;
+    cashiers: User[];
+  } {
+    const biz = this.getBusiness(businessId);
+    const users = this.getUsersByBusinessId(businessId);
+    const owner = users.find((u) => u.role === 'owner');
+    const cashiers = users.filter((u) => u.role === 'cashier');
+    return {
+      business: biz,
+      owner,
+      cashiers,
+    };
+  }
+
   public getBusinesses(): Business[] {
     const data = localStorage.getItem(STORAGE_KEYS.BUSINESSES);
     let list: Business[] = data ? JSON.parse(data) : SEED_BUSINESSES;
@@ -1124,21 +1147,198 @@ class StoreService {
     });
   }
 
-  public addBusiness(biz: Omit<Business, 'id' | 'totalSalesCount' | 'developerFeeRate' | 'createdAt' | 'accessCode'> & { accessCode?: string }): Business {
+  public addBusiness(biz: {
+    name: string;
+    tradeType: string;
+    currency?: string;
+    phone?: string;
+    address?: string;
+    ownerName?: string;
+    ownerPhone?: string;
+    ownerEmail?: string;
+    ownerPin?: string;
+    accessCode?: string;
+    subscriptionPlan?: SubscriptionPlan;
+    subscriptionStatus?: SubscriptionStatus;
+    subscriptionExpiresAt?: string;
+    cashierPin?: string;
+  }): Business & {
+    ownerUser: User;
+    cashierUser: User;
+    generatedAccessCode: string;
+    generatedOwnerPin: string;
+    generatedCashierPin: string;
+  } {
     const list = this.getBusinesses();
+
+    // 1. Generate unique session access code
+    let finalCode = biz.accessCode?.trim().toUpperCase();
+    if (!finalCode) {
+      finalCode = this.generateAccessCodeString();
+    } else if (!finalCode.startsWith('CP-')) {
+      finalCode = `CP-${finalCode}`;
+    }
+
+    // 2. Generate default 4-digit PIN for owner
+    const finalOwnerPin = biz.ownerPin?.trim() || this.generateOwnerPinString();
+
+    // 3. Default cashier PIN
+    const finalCashierPin = biz.cashierPin?.trim() || '0000';
+
+    const expDate = new Date();
+    expDate.setMonth(expDate.getMonth() + 12);
+
     const newBiz: Business = {
-      ...biz,
-      accessCode: biz.accessCode || this.generateAccessCodeString(),
       id: `biz_${Date.now()}`,
+      name: biz.name.trim(),
+      tradeType: biz.tradeType || 'Commerce Général',
+      currency: biz.currency || 'FCFA',
+      phone: biz.phone?.trim() || '+225 00 00 00 00',
+      address: biz.address?.trim() || 'Abidjan, Côte d\'Ivoire',
+      ownerName: biz.ownerName?.trim() || 'Propriétaire',
+      subscriptionPlan: biz.subscriptionPlan || 'pro',
+      subscriptionStatus: biz.subscriptionStatus || 'active',
+      subscriptionExpiresAt: biz.subscriptionExpiresAt || expDate.toISOString().slice(0, 10),
       totalSalesCount: 0,
       developerFeeRate: 20,
       createdAt: new Date().toISOString().slice(0, 10),
+      accessCode: finalCode,
     };
+
     list.push(newBiz);
     localStorage.setItem(STORAGE_KEYS.BUSINESSES, JSON.stringify(list));
     syncDocToFirestore('businesses', newBiz.id, newBiz);
+
+    // 4. Create Owner user account automatically with default PIN
+    const cleanOwnerName = newBiz.ownerName.trim();
+    const slugOwner = cleanOwnerName
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 10) || 'proprio';
+    const slugBiz = newBiz.name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 10) || 'commerce';
+
+    const ownerUser: User = {
+      id: `usr_owner_${Date.now()}`,
+      name: `${cleanOwnerName} (Propriétaire)`,
+      email: biz.ownerEmail?.trim() || `${slugOwner}@${slugBiz}.com`,
+      phone: biz.ownerPhone?.trim() || newBiz.phone,
+      role: 'owner',
+      businessId: newBiz.id,
+      pinCode: finalOwnerPin,
+      status: 'active',
+      createdAt: new Date().toISOString().slice(0, 10),
+      lastLogin: 'Jamais connecté',
+    };
+
+    // 5. Create default Cashier account automatically
+    const cashierUser: User = {
+      id: `usr_cashier_${Date.now() + 1}`,
+      name: 'Caissier(ère) 1',
+      email: `caisse1@${slugBiz}.com`,
+      phone: newBiz.phone,
+      role: 'cashier',
+      businessId: newBiz.id,
+      pinCode: finalCashierPin,
+      status: 'active',
+      createdAt: new Date().toISOString().slice(0, 10),
+      lastLogin: 'Jamais connecté',
+    };
+
+    const users = this.getUsers();
+    users.push(ownerUser, cashierUser);
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+    syncDocToFirestore('users', ownerUser.id, ownerUser);
+    syncDocToFirestore('users', cashierUser.id, cashierUser);
+
+    // 6. Seed starter products for the new business
+    this.seedStarterProductsForNewBusiness(newBiz.id);
+
+    // 7. System notification
+    this.addNotification({
+      targetRole: 'developer',
+      businessId: newBiz.id,
+      businessName: newBiz.name,
+      title: `Commerce Déployé : ${newBiz.name}`,
+      message: `Code session: ${finalCode} | PIN Propriétaire: ${finalOwnerPin} | PIN Caissier: ${finalCashierPin}`,
+      type: 'security',
+      priority: 'high',
+    });
+
     this.broadcast();
-    return newBiz;
+
+    return Object.assign(newBiz, {
+      ownerUser,
+      cashierUser,
+      generatedAccessCode: finalCode,
+      generatedOwnerPin: finalOwnerPin,
+      generatedCashierPin: finalCashierPin,
+    });
+  }
+
+  private seedStarterProductsForNewBusiness(bizId: string) {
+    const products = this.getProducts();
+    const starterItems = [
+      {
+        name: 'Article Pack Découverte 1',
+        category: 'Général',
+        purchasePrice: 1000,
+        salePrice: 1500,
+        stock: 50,
+        minStockAlert: 10,
+        unit: 'pièce',
+        isFavorite: true,
+      },
+      {
+        name: 'Produit Vedette Standard',
+        category: 'Général',
+        purchasePrice: 2000,
+        salePrice: 2800,
+        stock: 30,
+        minStockAlert: 8,
+        unit: 'pièce',
+        isFavorite: true,
+      },
+      {
+        name: 'Consommable / Accessoire Caisse',
+        category: 'Divers',
+        purchasePrice: 500,
+        salePrice: 800,
+        stock: 100,
+        minStockAlert: 20,
+        unit: 'pièce',
+        isFavorite: false,
+      },
+    ];
+
+    starterItems.forEach((item, index) => {
+      const prodId = `prod_${bizId}_${index + 1}`;
+      const barcode = `618${Math.floor(100000000 + Math.random() * 900000000)}`;
+      const prod: Product = {
+        id: prodId,
+        businessId: bizId,
+        code: `ART-${String(index + 1).padStart(3, '0')}`,
+        barcode,
+        name: item.name,
+        category: item.category,
+        purchasePrice: item.purchasePrice,
+        salePrice: item.salePrice,
+        stock: item.stock,
+        minStockAlert: item.minStockAlert,
+        unit: item.unit,
+        isFavorite: item.isFavorite,
+      };
+      products.push(prod);
+      syncDocToFirestore('products', prod.id, prod);
+    });
+
+    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
   }
 
   // --- Products ---
