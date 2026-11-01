@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Business, SaleTransaction, User } from '../types';
-import { store } from '../services/store';
+import { store, playSoundEffect } from '../services/store';
 import { useTheme } from '../services/themeContext';
 import { formatMoney, formatDate, formatTimeOnly } from '../utils/formatters';
 import {
@@ -20,6 +20,15 @@ import {
   AlertCircle,
   Eye,
   Lock,
+  Building2,
+  Phone,
+  MapPin,
+  Edit3,
+  Save,
+  Check,
+  Copy,
+  Store,
+  Settings,
 } from 'lucide-react';
 import { ReceiptModal } from './ReceiptModal';
 
@@ -31,9 +40,24 @@ interface OwnerDashboardViewProps {
 export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentUser, business }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
+
+  // Dynamic business data
+  const [currentBiz, setCurrentBiz] = useState<Business>(() => store.getBusiness(business.id) || business);
+
   const [transactions, setTransactions] = useState<SaleTransaction[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [selectedTxForReceipt, setSelectedTxForReceipt] = useState<SaleTransaction | null>(null);
+
+  // Edit Business modal state
+  const [showEditBizModal, setShowEditBizModal] = useState<boolean>(false);
+  const [editBizName, setEditBizName] = useState<string>(currentBiz.name);
+  const [editBizTrade, setEditBizTrade] = useState<string>(currentBiz.tradeType);
+  const [editBizPhone, setEditBizPhone] = useState<string>(currentBiz.phone);
+  const [editBizAddress, setEditBizAddress] = useState<string>(currentBiz.address);
+  const [editBizOwner, setEditBizOwner] = useState<string>(currentBiz.ownerName);
+  const [editBizCurrency, setEditBizCurrency] = useState<string>(currentBiz.currency || 'FCFA');
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [copiedAccessCode, setCopiedAccessCode] = useState<boolean>(false);
 
   // Team creation modal
   const [showAddUserModal, setShowAddUserModal] = useState<boolean>(false);
@@ -48,6 +72,8 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
   const [resetPinValue, setResetPinValue] = useState<string>('');
 
   const refreshData = () => {
+    const updatedBiz = store.getBusiness(business.id);
+    if (updatedBiz) setCurrentBiz(updatedBiz);
     setTransactions(store.getTransactions(business.id));
     setUsers(store.getUsers().filter((u) => u.businessId === business.id));
   };
@@ -123,6 +149,64 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
     alert(`Code PIN mis à jour avec succès pour ${resetUserTarget.name}.`);
   };
 
+  // Open Edit Business modal pre-filled
+  const handleOpenEditBizModal = () => {
+    const freshBiz = store.getBusiness(business.id) || currentBiz;
+    setCurrentBiz(freshBiz);
+    setEditBizName(freshBiz.name);
+    setEditBizTrade(freshBiz.tradeType);
+    setEditBizPhone(freshBiz.phone);
+    setEditBizAddress(freshBiz.address);
+    setEditBizOwner(freshBiz.ownerName);
+    setEditBizCurrency(freshBiz.currency || 'FCFA');
+    setSaveSuccessMsg(null);
+    setShowEditBizModal(true);
+    playSoundEffect('beep');
+  };
+
+  // Save Business modifications
+  const handleSaveBusinessInfo = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editBizName.trim()) return;
+
+    const updates: Partial<Business> = {
+      name: editBizName.trim(),
+      tradeType: editBizTrade.trim(),
+      phone: editBizPhone.trim(),
+      address: editBizAddress.trim(),
+      ownerName: editBizOwner.trim(),
+      currency: editBizCurrency.trim() || 'FCFA',
+    };
+
+    store.updateBusiness(currentBiz.id, updates);
+
+    // If owner updated their own name, sync currentUser profile
+    if (editBizOwner.trim() && currentUser.role === 'owner') {
+      store.updateUser(currentUser.id, {
+        name: `${editBizOwner.trim()} (Propriétaire)`,
+        phone: editBizPhone.trim() || currentUser.phone,
+      });
+    }
+
+    const updated = store.getBusiness(currentBiz.id);
+    if (updated) setCurrentBiz(updated);
+
+    playSoundEffect('cash');
+    setSaveSuccessMsg('Informations de votre commerce enregistrées avec succès !');
+
+    setTimeout(() => {
+      setSaveSuccessMsg(null);
+      setShowEditBizModal(false);
+    }, 1200);
+  };
+
+  const handleCopyAccessCode = (code: string) => {
+    navigator.clipboard?.writeText(code);
+    setCopiedAccessCode(true);
+    playSoundEffect('beep');
+    setTimeout(() => setCopiedAccessCode(false), 2500);
+  };
+
   return (
     <div className={`flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto w-full transition-colors ${
       isLight ? 'bg-slate-50 text-slate-900' : 'bg-[#05070c] text-white'
@@ -138,7 +222,7 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
             <span>Tableau de Bord Propriétaire</span>
             <span>·</span>
             <span className={isLight ? 'text-slate-500 font-normal' : 'text-neutral-400 font-normal'}>
-              {business.name}
+              {currentBiz.name}
             </span>
           </div>
           <h1 className="text-xl md:text-2xl font-extrabold tracking-tight">
@@ -146,17 +230,136 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
           </h1>
         </div>
 
-        <button
-          onClick={() => setShowAddUserModal(true)}
-          className={`px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-sm self-start sm:self-auto ${
-            isLight
-              ? 'bg-amber-500 hover:bg-amber-600 text-white'
-              : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 shadow-[0_0_12px_rgba(0,242,254,0.6)]'
-          }`}
-        >
-          <Plus className="w-4 h-4" />
-          <span>Créer Accès Gérant / Caissier</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+          <button
+            type="button"
+            onClick={handleOpenEditBizModal}
+            className={`px-3.5 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
+              isLight
+                ? 'bg-white hover:bg-slate-100 text-slate-800 border border-slate-300'
+                : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border border-cyan-500/40'
+            }`}
+            title="Modifier le nom, téléphone, adresse et informations de votre commerce"
+          >
+            <Settings className="w-4 h-4 text-amber-500" />
+            <span>Modifier mon Commerce</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowAddUserModal(true)}
+            className={`px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-sm ${
+              isLight
+                ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 shadow-[0_0_12px_rgba(0,242,254,0.6)]'
+            }`}
+          >
+            <Plus className="w-4 h-4" />
+            <span>Créer Accès Gérant / Caissier</span>
+          </button>
+        </div>
+      </div>
+
+      {/* INFORMATIONS COMMERCIALES & FICHE ÉTABLISSEMENT */}
+      <div className={`p-4 md:p-5 rounded-2xl border transition-all ${
+        isLight
+          ? 'bg-white border-slate-200 shadow-xs'
+          : 'bg-[#0a0e1e] border-cyan-500/25 shadow-[0_0_15px_rgba(0,242,254,0.08)]'
+      }`}>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className={`p-3 rounded-xl shrink-0 ${
+              isLight ? 'bg-amber-100 text-amber-800' : 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30'
+            }`}>
+              <Store className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base md:text-lg font-extrabold tracking-tight">
+                  {currentBiz.name}
+                </h2>
+                <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+                  isLight
+                    ? 'bg-slate-100 text-slate-700 border-slate-200'
+                    : 'bg-neutral-900 text-cyan-300 border-cyan-500/30'
+                }`}>
+                  {currentBiz.tradeType}
+                </span>
+                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border uppercase ${
+                  isLight
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : 'bg-emerald-950/40 text-emerald-300 border-emerald-800'
+                }`}>
+                  Formule {currentBiz.subscriptionPlan.toUpperCase()}
+                </span>
+              </div>
+
+              <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-xs ${
+                isLight ? 'text-slate-600' : 'text-neutral-300'
+              }`}>
+                {currentBiz.phone && (
+                  <span className="flex items-center gap-1 font-medium">
+                    <Phone className="w-3.5 h-3.5 opacity-60 text-amber-500" />
+                    <span>{currentBiz.phone}</span>
+                  </span>
+                )}
+                {currentBiz.address && (
+                  <span className="flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 opacity-60 text-rose-500" />
+                    <span>{currentBiz.address}</span>
+                  </span>
+                )}
+                <span className="flex items-center gap-1">
+                  <Shield className="w-3.5 h-3.5 opacity-60 text-emerald-500" />
+                  <span>Gérant(e) : <strong>{currentBiz.ownerName}</strong></span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0 self-start lg:self-center flex-wrap">
+            {/* Session access code badge with copy */}
+            <div className={`px-3 py-1.5 rounded-xl border flex items-center gap-2 ${
+              isLight ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-neutral-950 border-neutral-800 text-amber-300'
+            }`}>
+              <div>
+                <span className="text-[9px] uppercase font-bold tracking-wider block opacity-70">
+                  Code Session Caisse
+                </span>
+                <span className="font-mono font-black text-sm tracking-widest">
+                  {currentBiz.accessCode}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleCopyAccessCode(currentBiz.accessCode)}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  copiedAccessCode
+                    ? 'bg-emerald-500 text-white'
+                    : isLight
+                    ? 'hover:bg-amber-100 text-amber-800'
+                    : 'hover:bg-neutral-800 text-neutral-300'
+                }`}
+                title="Copier le code de session caisse pour vos caissiers"
+              >
+                {copiedAccessCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleOpenEditBizModal}
+              className={`px-3.5 py-2 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
+                isLight
+                  ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                  : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 shadow-[0_0_10px_rgba(0,242,254,0.4)]'
+              }`}
+            >
+              <Edit3 className="w-4 h-4" />
+              <span>Modifier les informations</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* SYNTHÈSE D'ACTIVITÉ & PERFORMANCE COMMERCIALE DU COMMERCE */}
@@ -763,11 +966,233 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
         </div>
       )}
 
+      {/* Modal: Modifier les Informations du Commerce */}
+      {showEditBizModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className={`rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl border my-8 ${
+            isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-[#0a0e1e] border-cyan-500/40 text-white'
+          }`}>
+            <div className={`flex items-center justify-between pb-3 border-b ${
+              isLight ? 'border-slate-200' : 'border-neutral-800'
+            }`}>
+              <div className="flex items-center gap-2.5">
+                <div className={`p-2 rounded-xl ${
+                  isLight ? 'bg-amber-100 text-amber-800' : 'bg-cyan-500/20 text-cyan-400'
+                }`}>
+                  <Store className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold">Modifier les Informations de votre Commerce</h3>
+                  <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                    Personnalisez votre enseigne, coordonnées et l'en-tête de vos reçus
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEditBizModal(false)}
+                className="p-1.5 rounded-lg opacity-60 hover:opacity-100 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {saveSuccessMsg && (
+              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs font-bold flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+                <span>{saveSuccessMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveBusinessInfo} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold mb-1 opacity-90">
+                    Nom commercial de l'établissement *
+                  </label>
+                  <input
+                    type="text"
+                    value={editBizName}
+                    onChange={(e) => setEditBizName(e.target.value)}
+                    placeholder="Ex: Supermarché Express Cocody"
+                    required
+                    className={`w-full px-3 py-2 rounded-lg focus:outline-hidden border text-sm font-bold ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-500'
+                        : 'bg-[#060814] border-cyan-500/30 text-white focus:border-cyan-400'
+                    }`}
+                  />
+                  <span className={`text-[10px] mt-0.5 block ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                    Ce nom s'affiche en haut de l'écran de caisse et sur l'ensemble des tickets imprimés.
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1 opacity-90">
+                    Secteur d'activité *
+                  </label>
+                  <select
+                    value={editBizTrade}
+                    onChange={(e) => setEditBizTrade(e.target.value)}
+                    className={`w-full px-3 py-2 rounded-lg focus:outline-hidden border ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-500'
+                        : 'bg-[#060814] border-cyan-500/30 text-white focus:border-cyan-400'
+                    }`}
+                  >
+                    <option value="Alimentation & Épicerie">Alimentation & Épicerie</option>
+                    <option value="Télécom & Services Digitaux">Télécom & Services Digitaux</option>
+                    <option value="Santé & Pharmacie">Santé & Pharmacie</option>
+                    <option value="Prêt-à-porter & Mode">Prêt-à-porter & Mode</option>
+                    <option value="Quincaillerie & BTP">Quincaillerie & BTP</option>
+                    <option value="Cosmétique & Beauté">Cosmétique & Beauté</option>
+                    <option value="Restauration & Fast-Food">Restauration & Fast-Food</option>
+                    <option value="Commerce Général">Commerce Général</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1 opacity-90">
+                    Numéro de téléphone commercial *
+                  </label>
+                  <input
+                    type="tel"
+                    value={editBizPhone}
+                    onChange={(e) => setEditBizPhone(e.target.value)}
+                    placeholder="Ex: +225 07 48 92 11 00"
+                    required
+                    className={`w-full px-3 py-2 rounded-lg focus:outline-hidden border ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-500'
+                        : 'bg-[#060814] border-cyan-500/30 text-white focus:border-cyan-400'
+                    }`}
+                  />
+                  <span className={`text-[10px] mt-0.5 block ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                    Numéro de contact imprimé pour vos clients.
+                  </span>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold mb-1 opacity-90">
+                    Adresse géographique & Ville *
+                  </label>
+                  <input
+                    type="text"
+                    value={editBizAddress}
+                    onChange={(e) => setEditBizAddress(e.target.value)}
+                    placeholder="Ex: Boulevard Latrille, Cocody Angré, Abidjan"
+                    required
+                    className={`w-full px-3 py-2 rounded-lg focus:outline-hidden border ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-500'
+                        : 'bg-[#060814] border-cyan-500/30 text-white focus:border-cyan-400'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1 opacity-90">
+                    Nom du Propriétaire / Gérant
+                  </label>
+                  <input
+                    type="text"
+                    value={editBizOwner}
+                    onChange={(e) => setEditBizOwner(e.target.value)}
+                    placeholder="Ex: Amadou Diallo"
+                    required
+                    className={`w-full px-3 py-2 rounded-lg focus:outline-hidden border ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-500'
+                        : 'bg-[#060814] border-cyan-500/30 text-white focus:border-cyan-400'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1 opacity-90">
+                    Devise Monétaire
+                  </label>
+                  <input
+                    type="text"
+                    value={editBizCurrency}
+                    onChange={(e) => setEditBizCurrency(e.target.value)}
+                    placeholder="FCFA"
+                    className={`w-full px-3 py-2 rounded-lg focus:outline-hidden border font-mono ${
+                      isLight
+                        ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-500'
+                        : 'bg-[#060814] border-cyan-500/30 text-white focus:border-cyan-400'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              {/* Aperçu en direct de l'en-tête du ticket thermique */}
+              <div className={`p-3.5 rounded-xl border space-y-2 ${
+                isLight ? 'bg-slate-100 border-slate-300 text-black' : 'bg-neutral-950 border-neutral-800 text-neutral-200'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 opacity-70">
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>Aperçu en direct sur vos tickets de caisse</span>
+                  </span>
+                  <span className="text-[10px] font-mono opacity-60">Format thermique 80mm / 58mm</span>
+                </div>
+                <div className="bg-white text-black p-3.5 rounded-lg border-2 border-black text-center font-sans space-y-1 shadow-xs">
+                  <div className="font-black text-sm uppercase tracking-wide">
+                    {editBizName || 'NOM DE VOTRE COMMERCE'}
+                  </div>
+                  {editBizAddress && (
+                    <div className="text-xs font-bold text-black">{editBizAddress}</div>
+                  )}
+                  {editBizPhone && (
+                    <div className="text-xs font-bold text-black">Tél: {editBizPhone}</div>
+                  )}
+                  <div className="text-[11px] font-bold text-black border-t border-dashed border-black pt-1 mt-1">
+                    Commerce Enregistré · Système Caisse Pro
+                  </div>
+                </div>
+              </div>
+
+              <div className={`pt-3 flex items-center justify-between border-t ${
+                isLight ? 'border-slate-200' : 'border-neutral-800'
+              }`}>
+                <span className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                  Code session caisse : <strong>{currentBiz.accessCode}</strong>
+                </span>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditBizModal(false)}
+                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                      isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'
+                    }`}
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="submit"
+                    className={`px-5 py-2 font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer ${
+                      isLight
+                        ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                        : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 font-extrabold shadow-[0_0_12px_rgba(0,242,254,0.6)]'
+                    }`}
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>Enregistrer les Modifications</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Receipt Modal if requested */}
       {selectedTxForReceipt && (
         <ReceiptModal
           transaction={selectedTxForReceipt}
-          business={business}
+          business={currentBiz}
           onClose={() => setSelectedTxForReceipt(null)}
         />
       )}
