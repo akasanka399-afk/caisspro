@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Business, SaleTransaction, User } from '../types';
 import { store, playSoundEffect } from '../services/store';
 import { useTheme } from '../services/themeContext';
-import { formatMoney, formatDate, formatTimeOnly } from '../utils/formatters';
+import { formatMoney, formatDate, formatTimeOnly, formatShortMoney } from '../utils/formatters';
+import { getMondayToSundayWeek, WeekRange } from '../utils/dateUtils';
 import {
   TrendingUp,
   Calendar,
@@ -29,8 +30,14 @@ import {
   Copy,
   Store,
   Settings,
+  FileText,
+  ChevronLeft,
+  ChevronRight,
+  Award,
+  BarChart3,
 } from 'lucide-react';
 import { ReceiptModal } from './ReceiptModal';
+import { WeeklyReportModal } from './WeeklyReportModal';
 
 interface OwnerDashboardViewProps {
   currentUser: User;
@@ -86,6 +93,10 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
     return () => unsub();
   }, [business.id]);
 
+  // Weekly report modal & week navigation state
+  const [showWeeklyReportModal, setShowWeeklyReportModal] = useState<boolean>(false);
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState<number>(0);
+
   // Financial calculations
   const todayDateStr = new Date().toISOString().slice(0, 10);
   const currentMonthStr = todayDateStr.slice(0, 7);
@@ -94,11 +105,49 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
   const todayTransactions = transactions.filter((t) => t.timestamp.startsWith(todayDateStr));
   const dailyRevenue = todayTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
 
-  // Weekly CA (past 7 days)
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-  const weeklyTransactions = transactions.filter((t) => new Date(t.timestamp.replace(' ', 'T')) >= sevenDaysAgo);
-  const weeklyRevenue = weeklyTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
+  // Strict ISO Monday-to-Sunday Weekly CA calculation
+  const currentWeekRange: WeekRange = useMemo(() => {
+    return getMondayToSundayWeek(new Date(), selectedWeekOffset);
+  }, [selectedWeekOffset]);
+
+  const currentWeekTransactions = useMemo(() => {
+    const mondayStart = currentWeekRange.monday.getTime();
+    const sundayEnd = currentWeekRange.sunday.getTime();
+    return transactions.filter((t) => {
+      if (t.businessId !== business.id) return false;
+      const tTime = new Date(t.timestamp.replace(' ', 'T')).getTime();
+      return tTime >= mondayStart && tTime <= sundayEnd;
+    });
+  }, [transactions, business.id, currentWeekRange]);
+
+  const weeklyRevenueStrict = useMemo(() => {
+    return currentWeekTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
+  }, [currentWeekTransactions]);
+
+  // 7-day breakdown (Lundi à Dimanche) for interactive week chart
+  const weekDaysChart = useMemo(() => {
+    return currentWeekRange.days.map((d) => {
+      const dayTx = currentWeekTransactions.filter((t) => t.timestamp.startsWith(d.dateStr));
+      const ca = dayTx.reduce((sum, t) => sum + t.totalAmount, 0);
+      return {
+        ...d,
+        ca,
+        ticketsCount: dayTx.length,
+      };
+    });
+  }, [currentWeekRange.days, currentWeekTransactions]);
+
+  const maxDayCA = useMemo(() => {
+    return Math.max(...weekDaysChart.map((d) => d.ca), 1);
+  }, [weekDaysChart]);
+
+  const peakWeekDay = useMemo(() => {
+    let peak = weekDaysChart[0];
+    for (const d of weekDaysChart) {
+      if (d.ca > peak.ca) peak = d;
+    }
+    return peak.ca > 0 ? peak : null;
+  }, [weekDaysChart]);
 
   // Monthly CA (this month)
   const monthlyTransactions = transactions.filter((t) => t.timestamp.startsWith(currentMonthStr));
@@ -455,26 +504,34 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
           </div>
         </div>
 
-        {/* CA Hebdomadaire */}
-        <div className={`p-4 rounded-xl space-y-2 border ${
+        {/* CA Hebdomadaire (Strict Lundi à Dimanche) */}
+        <div className={`p-4 rounded-xl space-y-2 border relative transition-all ${
           isLight
-            ? 'bg-white border-slate-200 shadow-xs'
-            : 'bg-[#0a0d1e] border-cyan-500/25 shadow-[0_0_12px_rgba(0,242,254,0.08)]'
+            ? 'bg-white border-slate-200 shadow-xs hover:border-blue-300'
+            : 'bg-[#0a0d1e] border-cyan-500/25 shadow-[0_0_12px_rgba(0,242,254,0.08)] hover:border-cyan-400/50'
         }`}>
           <div className="flex items-center justify-between text-xs opacity-70">
-            <span className="font-medium">CA Hebdomadaire (7 jours)</span>
+            <span className="font-semibold">CA Hebdomadaire (Lun. à Dim.)</span>
             <Calendar className={`w-4 h-4 ${isLight ? 'text-blue-600' : 'text-cyan-400'}`} />
           </div>
           <div className="text-2xl font-extrabold font-mono tabular-nums">
-            {formatMoney(weeklyRevenue)}
+            {formatMoney(weeklyRevenueStrict, currentBiz.currency || 'FCFA')}
           </div>
           <div className={`text-[11px] flex items-center justify-between pt-1 border-t ${
             isLight ? 'border-slate-100 text-slate-500' : 'border-neutral-800 text-neutral-400'
           }`}>
-            <span>{weeklyTransactions.length} ventes sur la semaine</span>
-            <span className={`font-semibold ${isLight ? 'text-blue-600' : 'text-cyan-400'}`}>
-              Semaine 44
-            </span>
+            <span className="truncate">{currentWeekTransactions.length} vente(s) · Sem. {currentWeekRange.weekNumber}</span>
+            <button
+              type="button"
+              onClick={() => setShowWeeklyReportModal(true)}
+              className={`font-bold flex items-center gap-1 cursor-pointer transition-colors ${
+                isLight ? 'text-blue-600 hover:text-blue-800' : 'text-cyan-400 hover:text-cyan-300'
+              }`}
+              title="Ouvrir le rapport hebdomadaire complet"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Rapport</span>
+            </button>
           </div>
         </div>
 
@@ -522,6 +579,205 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
               Optimal
             </span>
           </div>
+        </div>
+      </div>
+
+      {/* SECTION ANALYSE HEBDOMADAIRE (LUNDI À DIMANCHE) AVEC GRAPHIQUE & RAPPORT */}
+      <div className={`p-5 md:p-6 rounded-2xl border space-y-5 transition-all ${
+        isLight
+          ? 'bg-white border-slate-200 shadow-xs'
+          : 'bg-[#0a0d1e] border-cyan-500/25 shadow-[0_0_15px_rgba(0,242,254,0.08)]'
+      }`}>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-inherit">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${
+                isLight
+                  ? 'bg-blue-50 text-blue-800 border-blue-200'
+                  : 'bg-cyan-950/40 text-cyan-300 border-cyan-800'
+              }`}>
+                Cycle Hebdomadaire · Lundi à Dimanche
+              </span>
+              <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                Semaine ISO N° {currentWeekRange.weekNumber} / {currentWeekRange.year}
+              </span>
+            </div>
+            <h3 className="text-base md:text-lg font-extrabold flex items-center gap-2">
+              <BarChart3 className={`w-5 h-5 ${isLight ? 'text-blue-600' : 'text-cyan-400'}`} />
+              <span>Chiffre d'Affaires Hebdomadaire ({currentWeekRange.shortLabel})</span>
+            </h3>
+            <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+              Calcul comptable du lundi 00:00 au dimanche 23:59 avec répartition journalière et détection automatique du pic de ventes.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 self-start md:self-center flex-wrap">
+            {/* Week navigation buttons */}
+            <div className={`flex items-center rounded-xl border p-1 ${
+              isLight ? 'bg-slate-100 border-slate-200' : 'bg-neutral-900 border-neutral-800'
+            }`}>
+              <button
+                type="button"
+                onClick={() => setSelectedWeekOffset((p) => p - 1)}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  isLight ? 'hover:bg-white text-slate-700' : 'hover:bg-neutral-800 text-neutral-300'
+                }`}
+                title="Semaine précédente"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedWeekOffset(0)}
+                disabled={selectedWeekOffset === 0}
+                className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
+                  selectedWeekOffset === 0
+                    ? isLight
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-cyan-500 text-neutral-950'
+                    : isLight
+                    ? 'text-slate-600 hover:bg-white'
+                    : 'text-neutral-400 hover:bg-neutral-800'
+                }`}
+              >
+                Cette Semaine
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedWeekOffset((p) => p + 1)}
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  isLight ? 'hover:bg-white text-slate-700' : 'hover:bg-neutral-800 text-neutral-300'
+                }`}
+                title="Semaine suivante"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* View Full Report Button */}
+            <button
+              type="button"
+              onClick={() => setShowWeeklyReportModal(true)}
+              className={`px-3.5 py-2 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
+                isLight
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200'
+                  : 'bg-cyan-500 hover:bg-cyan-400 text-neutral-950 shadow-[0_0_12px_rgba(0,242,254,0.4)]'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>Générer le Rapport Hebdomadaire</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 7-DAY VISUAL BAR CHART (Lundi à Dimanche) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2.5 pt-1">
+          {weekDaysChart.map((d) => {
+            const heightPercent = maxDayCA > 0 ? Math.max(8, Math.round((d.ca / maxDayCA) * 100)) : 8;
+            const isPeak = peakWeekDay && peakWeekDay.dateStr === d.dateStr && d.ca > 0;
+
+            return (
+              <div
+                key={d.dateStr}
+                className={`p-3 rounded-xl border flex flex-col justify-between transition-all ${
+                  d.isToday
+                    ? isLight
+                      ? 'bg-blue-50/80 border-blue-300 ring-2 ring-blue-400/30'
+                      : 'bg-cyan-950/30 border-cyan-400 ring-2 ring-cyan-500/20'
+                    : isLight
+                    ? 'bg-slate-50/70 border-slate-200 hover:bg-slate-100/60'
+                    : 'bg-[#060814]/80 border-neutral-800 hover:border-neutral-700'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs mb-2">
+                  <div className="flex flex-col">
+                    <span className="font-bold text-xs">{d.dayName}</span>
+                    <span className={`text-[10px] font-mono ${isLight ? 'text-slate-400' : 'text-neutral-500'}`}>
+                      {d.formattedDate}
+                    </span>
+                  </div>
+                  {isPeak && (
+                    <span title="Jour record de vente">
+                      <Award className="w-4 h-4 text-amber-500 shrink-0" />
+                    </span>
+                  )}
+                  {d.isToday && !isPeak && (
+                    <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" title="Aujourd'hui" />
+                  )}
+                </div>
+
+                {/* Vertical visual bar indicator */}
+                <div className="h-24 w-full flex items-end justify-center py-1">
+                  <div className="w-full bg-slate-200 dark:bg-neutral-800/80 rounded-lg h-full p-1 flex items-end">
+                    <div
+                      className={`w-full rounded-md transition-all duration-500 ${
+                        isPeak
+                          ? 'bg-gradient-to-t from-amber-500 to-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                          : d.ca > 0
+                          ? isLight
+                            ? 'bg-blue-500'
+                            : 'bg-cyan-400'
+                          : 'bg-transparent'
+                      }`}
+                      style={{ height: `${d.ca > 0 ? heightPercent : 4}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-2 pt-2 border-t border-inherit text-center">
+                  <div className="font-mono font-black text-xs tabular-nums">
+                    {formatShortMoney(d.ca)}
+                  </div>
+                  <div className={`text-[10px] flex items-center justify-center gap-1 ${
+                    isLight ? 'text-slate-500' : 'text-neutral-400'
+                  }`}>
+                    <span>{d.ticketsCount} vente(s)</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Weekly Summary Footer Ribbon */}
+        <div className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+          isLight ? 'bg-slate-50 border-slate-200' : 'bg-[#060814] border-cyan-500/15'
+        }`}>
+          <div className="flex items-center gap-4 flex-wrap">
+            <div>
+              <span className="opacity-60 block text-[10px]">Total CA Semaine :</span>
+              <strong className="text-sm font-mono text-emerald-600 dark:text-emerald-400">
+                {formatMoney(weeklyRevenueStrict, currentBiz.currency || 'FCFA')}
+              </strong>
+            </div>
+            <div className={`w-px h-6 ${isLight ? 'bg-slate-200' : 'bg-neutral-800'}`} />
+            <div>
+              <span className="opacity-60 block text-[10px]">Total Tickets Encaissés :</span>
+              <strong className="text-sm font-mono">{currentWeekTransactions.length} ventes</strong>
+            </div>
+            {peakWeekDay && (
+              <>
+                <div className={`w-px h-6 ${isLight ? 'bg-slate-200' : 'bg-neutral-800'}`} />
+                <div>
+                  <span className="opacity-60 block text-[10px]">Jour le plus rentable :</span>
+                  <strong className="text-amber-500">
+                    {peakWeekDay.dayName} ({formatShortMoney(peakWeekDay.ca)} {currentBiz.currency || 'FCFA'})
+                  </strong>
+                </div>
+              </>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowWeeklyReportModal(true)}
+            className={`font-bold flex items-center gap-1.5 text-xs self-start sm:self-auto cursor-pointer ${
+              isLight ? 'text-blue-600 hover:text-blue-800' : 'text-cyan-400 hover:text-cyan-300'
+            }`}
+          >
+            <span>Consulter le rapport officiel & exports</span>
+            <ArrowUpRight className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
@@ -1186,6 +1442,18 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
             </form>
           </div>
         </div>
+      )}
+
+      {/* Weekly Report Modal */}
+      {showWeeklyReportModal && (
+        <WeeklyReportModal
+          business={currentBiz}
+          transactions={transactions}
+          users={users}
+          isLight={isLight}
+          initialWeekOffset={selectedWeekOffset}
+          onClose={() => setShowWeeklyReportModal(false)}
+        />
       )}
 
       {/* Receipt Modal if requested */}
