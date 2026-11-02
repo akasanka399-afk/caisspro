@@ -1,6 +1,7 @@
 import {
   Business,
   CashRegisterSession,
+  CashDenominations,
   CreditSettlement,
   Customer,
   Product,
@@ -812,8 +813,31 @@ const SEED_TRANSACTIONS: SaleTransaction[] = [
   },
 ];
 
-// Seed cash session for current day
+// Seed cash session for current day and historical closed Z-session
 const SEED_SESSIONS: CashRegisterSession[] = [
+  {
+    id: 'sess_yesterday',
+    zNumber: 'Z-20261027-001',
+    businessId: 'biz_cocody',
+    cashierId: 'usr_cashier1',
+    cashierName: 'Fatou Koné',
+    openedAt: '2026-10-27 08:00:00',
+    closedAt: '2026-10-27 19:30:00',
+    openingFloat: 25000,
+    expectedCash: 30200,
+    actualCash: 30200,
+    cashDifference: 0,
+    totalSalesAmount: 16200,
+    totalSalesCount: 2,
+    status: 'closed',
+    cashSales: 5200,
+    mobileMoneySales: 0,
+    cardSales: 11000,
+    creditSales: 0,
+    discountsTotal: 0,
+    creditSettlementsCash: 0,
+    notes: 'Clôture de journée normale sans écart. Caisse parfaitement équilibrée.',
+  },
   {
     id: 'sess_today',
     businessId: 'biz_cocody',
@@ -825,6 +849,11 @@ const SEED_SESSIONS: CashRegisterSession[] = [
     totalSalesAmount: 24500,
     totalSalesCount: 4,
     status: 'open',
+    cashSales: 21300,
+    mobileMoneySales: 3200,
+    cardSales: 0,
+    creditSales: 0,
+    discountsTotal: 150,
   },
 ];
 
@@ -1951,19 +1980,95 @@ class StoreService {
     this.broadcast();
   }
 
-  public closeCashSession(sessionId: string, actualCash: number, notes?: string): CashRegisterSession | undefined {
+  public closeCashSession(
+    sessionId: string,
+    actualCash: number,
+    notes?: string,
+    denominations?: CashDenominations
+  ): CashRegisterSession | undefined {
     const sessions = this.getSessions();
     const sess = sessions.find((s) => s.id === sessionId);
     if (!sess) return undefined;
 
-    sess.closedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const now = new Date();
+    const nowStr = now.toISOString().replace('T', ' ').slice(0, 19);
+    const dateFormatted = now.toISOString().slice(0, 10).replace(/-/g, '');
+
+    // Form sequence Z-YYYYMMDD-001 based on closed sessions
+    const closedCount = sessions.filter((s) => s.status === 'closed').length;
+    const zNumber = `Z-${dateFormatted}-${String(closedCount + 1).padStart(3, '0')}`;
+
+    // Get all transactions during this session
+    const openTime = new Date(sess.openedAt.replace(' ', 'T')).getTime();
+    const allTx = this.getTransactions(sess.businessId);
+    const sessionTx = allTx.filter((t) => {
+      const tTime = new Date(t.timestamp.replace(' ', 'T')).getTime();
+      return tTime >= openTime && t.status === 'completed';
+    });
+
+    const cashSales = sessionTx
+      .filter((t) => t.paymentMethod === 'cash')
+      .reduce((sum, t) => sum + t.totalAmount, 0);
+
+    const mobileMoneySales = sessionTx
+      .filter((t) => t.paymentMethod === 'mobile_money')
+      .reduce((sum, t) => sum + t.totalAmount, 0);
+
+    const cardSales = sessionTx
+      .filter((t) => t.paymentMethod === 'card')
+      .reduce((sum, t) => sum + t.totalAmount, 0);
+
+    const creditSales = sessionTx
+      .filter((t) => t.paymentMethod === 'credit')
+      .reduce((sum, t) => sum + t.totalAmount, 0);
+
+    const discountsTotal = sessionTx.reduce((sum, t) => sum + (t.discountTotal || 0), 0);
+
+    // Credit settlements in cash during this session
+    const settlements = this.getCreditSettlements(sess.businessId);
+    const creditSettlementsCash = settlements
+      .filter((stl) => {
+        const sTime = new Date(stl.timestamp.replace(' ', 'T')).getTime();
+        return sTime >= openTime && stl.paymentMethod === 'cash';
+      })
+      .reduce((sum, stl) => sum + stl.amount, 0);
+
+    // Total expected cash = openingFloat + cashSales + creditSettlementsCash
+    const totalExpectedCash = sess.openingFloat + cashSales + creditSettlementsCash;
+
+    sess.zNumber = zNumber;
+    sess.closedAt = nowStr;
+    sess.expectedCash = totalExpectedCash;
     sess.actualCash = actualCash;
-    sess.cashDifference = actualCash - sess.expectedCash;
+    sess.cashDifference = actualCash - totalExpectedCash;
+    sess.totalSalesAmount = sessionTx.reduce((sum, t) => sum + t.totalAmount, 0);
+    sess.totalSalesCount = sessionTx.length;
+    sess.cashSales = cashSales;
+    sess.mobileMoneySales = mobileMoneySales;
+    sess.cardSales = cardSales;
+    sess.creditSales = creditSales;
+    sess.discountsTotal = discountsTotal;
+    sess.creditSettlementsCash = creditSettlementsCash;
+    sess.denominations = denominations;
     sess.status = 'closed';
     sess.notes = notes;
 
     localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sessions));
     syncDocToFirestore('sessions', sess.id, sess);
+
+    // Notify owner if there is a discrepancy
+    if (sess.cashDifference !== 0) {
+      const isShort = sess.cashDifference < 0;
+      this.addNotification({
+        targetRole: 'owner',
+        businessId: sess.businessId,
+        title: isShort ? 'Alerte : Déficit de Caisse (Rapport Z)' : 'Excédent de Caisse (Rapport Z)',
+        message: `${sess.cashierName} a clôturé sa caisse (${zNumber}) avec un écart de ${sess.cashDifference > 0 ? '+' : ''}${sess.cashDifference} F CFA.`,
+        type: 'security',
+        priority: isShort ? 'high' : 'normal',
+      });
+    }
+
     this.broadcast();
     return sess;
   }

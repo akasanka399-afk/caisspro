@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Business, SaleTransaction, User } from '../types';
+import { Business, SaleTransaction, User, CashRegisterSession } from '../types';
 import { store, playSoundEffect } from '../services/store';
 import { useTheme } from '../services/themeContext';
 import { formatMoney, formatDate, formatTimeOnly, formatShortMoney } from '../utils/formatters';
@@ -35,9 +35,11 @@ import {
   ChevronRight,
   Award,
   BarChart3,
+  Printer,
 } from 'lucide-react';
 import { ReceiptModal } from './ReceiptModal';
 import { WeeklyReportModal } from './WeeklyReportModal';
+import { ZReportModal } from './ZReportModal';
 
 interface OwnerDashboardViewProps {
   currentUser: User;
@@ -53,7 +55,9 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
 
   const [transactions, setTransactions] = useState<SaleTransaction[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [sessions, setSessions] = useState<CashRegisterSession[]>([]);
   const [selectedTxForReceipt, setSelectedTxForReceipt] = useState<SaleTransaction | null>(null);
+  const [selectedSessionForZ, setSelectedSessionForZ] = useState<CashRegisterSession | null>(null);
 
   // Edit Business modal state
   const [showEditBizModal, setShowEditBizModal] = useState<boolean>(false);
@@ -83,6 +87,7 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
     if (updatedBiz) setCurrentBiz(updatedBiz);
     setTransactions(store.getTransactions(business.id));
     setUsers(store.getUsers().filter((u) => u.businessId === business.id));
+    setSessions(store.getSessions(business.id));
   };
 
   useEffect(() => {
@@ -1014,6 +1019,121 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
         </div>
       </div>
 
+      {/* HISTORIQUE DES CLÔTURES DE CAISSE & RAPPORTS Z */}
+      <div className={`rounded-xl border overflow-hidden ${
+        isLight ? 'bg-white border-slate-200 shadow-xs' : 'bg-[#0a0d1e] border-cyan-500/25'
+      }`}>
+        <div className={`px-5 py-4 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+          isLight ? 'bg-slate-50 border-slate-200' : 'bg-[#060814] border-cyan-500/20'
+        }`}>
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-rose-500" />
+            <div>
+              <h3 className="text-sm font-bold">Historique des Clôtures de Caisse & Rapports Z</h3>
+              <p className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                Rapports de fin de journée, contrôle du tiroir-caisse et détection des écarts
+              </p>
+            </div>
+          </div>
+          <span className={`text-xs font-semibold ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+            {sessions.filter((s) => s.status === 'closed').length} clôture(s) archivée(s)
+          </span>
+        </div>
+
+        {sessions.filter((s) => s.status === 'closed').length === 0 ? (
+          <div className="p-8 text-center text-xs opacity-60">
+            Aucune clôture de caisse archivée pour le moment.
+          </div>
+        ) : (
+          <div className="overflow-x-auto max-h-80 overflow-y-auto">
+            <table className="w-full text-left text-xs">
+              <thead className={`border-b sticky top-0 ${
+                isLight ? 'bg-slate-50/95 border-slate-200 text-slate-500' : 'bg-[#060814]/95 border-cyan-500/20 text-neutral-400'
+              }`}>
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Rapport Z & Date</th>
+                  <th className="px-4 py-3 font-semibold">Caissier(ère)</th>
+                  <th className="px-4 py-3 font-semibold text-center">Ventes / Tickets</th>
+                  <th className="px-4 py-3 font-semibold text-right">CA Net</th>
+                  <th className="px-4 py-3 font-semibold text-right">Espèces Attendues</th>
+                  <th className="px-4 py-3 font-semibold text-right">Espèces Comptées</th>
+                  <th className="px-4 py-3 font-semibold text-center">Écart Constaté</th>
+                  <th className="px-4 py-3 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className={`divide-y ${isLight ? 'divide-slate-100' : 'divide-neutral-800/80'}`}>
+                {sessions
+                  .filter((s) => s.status === 'closed')
+                  .map((s) => {
+                    const diff = s.cashDifference || 0;
+                    const isPerfect = diff === 0;
+                    const isSurplus = diff > 0;
+                    const zNum = s.zNumber || `Z-${s.id.slice(-6).toUpperCase()}`;
+
+                    return (
+                      <tr key={s.id} className={isLight ? 'hover:bg-slate-50/80 transition-colors' : 'hover:bg-[#0f142b] transition-colors'}>
+                        <td className="px-4 py-3">
+                          <span className="font-bold block text-xs">{zNum}</span>
+                          <span className={`text-[10px] font-mono ${isLight ? 'text-slate-400' : 'text-neutral-500'}`}>
+                            {s.closedAt ? formatDate(s.closedAt) : formatDate(s.openedAt)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-medium">
+                          {s.cashierName}
+                        </td>
+                        <td className="px-4 py-3 text-center font-mono">
+                          <span className="font-bold">{s.totalSalesCount}</span> tickets
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-black text-emerald-600 dark:text-emerald-400">
+                          {formatMoney(s.totalSalesAmount, currentBiz.currency || 'FCFA')}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono opacity-80">
+                          {formatMoney(s.expectedCash, currentBiz.currency || 'FCFA')}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-bold">
+                          {formatMoney(s.actualCash || 0, currentBiz.currency || 'FCFA')}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold ${
+                            isPerfect
+                              ? isLight
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-emerald-950/40 text-emerald-300 border border-emerald-800'
+                              : isSurplus
+                              ? isLight
+                                ? 'bg-cyan-50 text-cyan-700 border border-cyan-200'
+                                : 'bg-cyan-950/40 text-cyan-300 border border-cyan-800'
+                              : isLight
+                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                              : 'bg-rose-950/40 text-rose-300 border border-rose-800'
+                          }`}>
+                            {isPerfect ? '0 F (Parfait)' : isSurplus ? `+${formatMoney(diff, '')} (Excédent)` : `${formatMoney(diff, '')} (Déficit)`}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSessionForZ(s)}
+                            className={`px-2.5 py-1 text-xs font-bold rounded-lg border flex items-center gap-1.5 ml-auto transition-colors cursor-pointer ${
+                              isLight
+                                ? 'bg-white hover:bg-slate-100 text-slate-800 border-slate-300'
+                                : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-cyan-500/30'
+                            }`}
+                            title="Voir et réimprimer le rapport de caisse Z"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-rose-500" />
+                            <span>Ticket Z</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Modal: Add New Team Member (Gérant ou Caissier) */}
       {showAddUserModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
@@ -1462,6 +1582,16 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
           transaction={selectedTxForReceipt}
           business={currentBiz}
           onClose={() => setSelectedTxForReceipt(null)}
+        />
+      )}
+
+      {/* Official Z-Report Modal */}
+      {selectedSessionForZ && (
+        <ZReportModal
+          session={selectedSessionForZ}
+          business={currentBiz}
+          isLight={isLight}
+          onClose={() => setSelectedSessionForZ(null)}
         />
       )}
     </div>

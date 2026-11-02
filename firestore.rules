@@ -57,8 +57,13 @@ service cloud.firestore {
         && request.resource.data.ticketNumber is string
         && request.resource.data.paymentMethod in ['cash', 'mobile_money', 'card', 'credit'];
       allow update: if isValidId(transactionId)
-        && request.resource.data.status in ['completed', 'refunded'];
-      allow delete: if isAuthenticated();
+        && request.resource.data.status in ['completed', 'refunded', 'cancelled'];
+      allow delete: if true;
+    }
+
+    // Credit settlements
+    match /credit_settlements/{settlementId} {
+      allow read, write: if true;
     }
 
     // Cash Register Sessions

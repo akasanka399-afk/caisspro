@@ -105,8 +105,22 @@ export interface SaleTransaction {
   status: 'completed' | 'refunded';
 }
 
+export interface CashDenominations {
+  b10000?: number;
+  b5000?: number;
+  b2000?: number;
+  b1000?: number;
+  b500?: number;
+  p500?: number;
+  p200?: number;
+  p100?: number;
+  p50?: number;
+  p25?: number;
+}
+
 export interface CashRegisterSession {
   id: string;
+  zNumber?: string; // e.g. Z-20261102-001
   businessId: string;
   cashierId: string;
   cashierName: string;
@@ -120,6 +134,14 @@ export interface CashRegisterSession {
   totalSalesCount: number;
   status: 'open' | 'closed';
   notes?: string;
+  // Detailed breakdowns for Z-report
+  cashSales?: number;
+  mobileMoneySales?: number;
+  cardSales?: number;
+  creditSales?: number;
+  discountsTotal?: number;
+  creditSettlementsCash?: number;
+  denominations?: CashDenominations;
 }
 
 export type NotificationType = 'sale_milestone' | 'low_stock' | 'subscription' | 'security' | 'system';

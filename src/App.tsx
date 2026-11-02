@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Business, CashRegisterSession, User } from './types';
+import { Business, CashRegisterSession, CashDenominations, User } from './types';
 import { store } from './services/store';
 import { ThemeProvider, useTheme } from './services/themeContext';
 import { TopBar } from './components/TopBar';
@@ -15,6 +15,7 @@ import { StockInventoryView } from './components/StockInventoryView';
 import { CustomersView } from './components/CustomersView';
 import { AuthModal } from './components/AuthModal';
 import { CashSessionModal } from './components/CashSessionModal';
+import { ZReportModal } from './components/ZReportModal';
 
 function MainLayout() {
   const { theme } = useTheme();
@@ -34,6 +35,7 @@ function MainLayout() {
   // Modals
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [cashSessionModalMode, setCashSessionModalMode] = useState<'open' | 'close' | null>(null);
+  const [activeZReportSession, setActiveZReportSession] = useState<CashRegisterSession | null>(null);
 
   // Active cash session
   const [activeSession, setActiveSession] = useState<CashRegisterSession | undefined>(() =>
@@ -103,12 +105,19 @@ function MainLayout() {
     setCashSessionModalMode(null);
   };
 
-  // Handle cash session close
-  const handleCloseCashSession = (sessionId: string, actualCash: number, notes?: string) => {
-    store.closeCashSession(sessionId, actualCash, notes);
+  // Handle cash session close & trigger official Z-Report
+  const handleCloseCashSession = (
+    sessionId: string,
+    actualCash: number,
+    notes?: string,
+    denominations?: CashDenominations
+  ) => {
+    const closed = store.closeCashSession(sessionId, actualCash, notes, denominations);
     setActiveSession(undefined);
     setCashSessionModalMode(null);
-    alert('Clôture de caisse validée avec succès. Rapport Z archivé.');
+    if (closed) {
+      setActiveZReportSession(closed);
+    }
   };
 
   const isLight = theme === 'light';
@@ -178,6 +187,16 @@ function MainLayout() {
           onOpenSession={handleOpenCashSession}
           onCloseSession={handleCloseCashSession}
           onDismiss={() => setCashSessionModalMode(null)}
+        />
+      )}
+
+      {/* Official Z-Report Modal upon closure or on demand */}
+      {activeZReportSession && (
+        <ZReportModal
+          session={activeZReportSession}
+          business={currentBusiness}
+          isLight={isLight}
+          onClose={() => setActiveZReportSession(null)}
         />
       )}
     </div>

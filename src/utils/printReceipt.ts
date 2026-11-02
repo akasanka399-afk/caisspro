@@ -1,4 +1,4 @@
-import { Business, SaleTransaction } from '../types';
+import { Business, SaleTransaction, CashRegisterSession } from '../types';
 import { formatMoney, formatDate } from './formatters';
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -501,6 +501,429 @@ export async function copyReceiptToClipboard(transaction: SaleTransaction, busin
     return success;
   } catch (err) {
     console.error('Failed to copy receipt text to clipboard:', err);
+    return false;
+  }
+}
+
+/**
+ * Builds high-contrast, thermal-ready HTML document for Official Z-Report (Clôture de Caisse)
+ */
+export function buildThermalZReportHtml(session: CashRegisterSession, business: Business): string {
+  const diff = session.cashDifference || 0;
+  const isPerfect = diff === 0;
+  const isSurplus = diff > 0;
+  const avgBasket = session.totalSalesCount > 0 ? Math.round(session.totalSalesAmount / session.totalSalesCount) : 0;
+  const cur = business.currency || 'F CFA';
+  const zNum = session.zNumber || `Z-${session.id.slice(-6).toUpperCase()}`;
+
+  // Denominations table if filled
+  let denomRows = '';
+  if (session.denominations) {
+    const denoms = [
+      { label: 'Billets 10 000 F', count: session.denominations.b10000, value: (session.denominations.b10000 || 0) * 10000 },
+      { label: 'Billets 5 000 F', count: session.denominations.b5000, value: (session.denominations.b5000 || 0) * 5000 },
+      { label: 'Billets 2 000 F', count: session.denominations.b2000, value: (session.denominations.b2000 || 0) * 2000 },
+      { label: 'Billets 1 000 F', count: session.denominations.b1000, value: (session.denominations.b1000 || 0) * 1000 },
+      { label: 'Billets 500 F', count: session.denominations.b500, value: (session.denominations.b500 || 0) * 500 },
+      { label: 'Pièces 500 F', count: session.denominations.p500, value: (session.denominations.p500 || 0) * 500 },
+      { label: 'Pièces 200 F', count: session.denominations.p200, value: (session.denominations.p200 || 0) * 200 },
+      { label: 'Pièces 100 F', count: session.denominations.p100, value: (session.denominations.p100 || 0) * 100 },
+      { label: 'Pièces 50 F', count: session.denominations.p50, value: (session.denominations.p50 || 0) * 50 },
+      { label: 'Pièces 25 F', count: session.denominations.p25, value: (session.denominations.p25 || 0) * 25 },
+    ].filter((d) => (d.count || 0) > 0);
+
+    if (denoms.length > 0) {
+      denomRows = `
+        <div class="divider-dashed"></div>
+        <div class="section-title">DÉTAIL DU BILLETAGE (COMPTAGE ESPÈCES)</div>
+        <table class="items-table">
+          ${denoms
+            .map(
+              (d) => `
+            <tr>
+              <td>${d.label} (x${d.count})</td>
+              <td class="text-right bold">${formatMoney(d.value, 'F')}</td>
+            </tr>`
+            )
+            .join('')}
+        </table>`;
+    }
+  }
+
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Rapport Z ${escapeHtml(zNum)} - ${escapeHtml(business.name)}</title>
+  <style>
+    @page {
+      size: 80mm auto;
+      margin: 0mm;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff !important;
+      color: #000000 !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'DejaVu Sans Mono', Arial, sans-serif, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.38;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .ticket-wrapper {
+      width: 100%;
+      max-width: 80mm;
+      margin: 0 auto;
+      padding: 8px 6px 16px 6px;
+    }
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .bold { font-weight: 900; }
+    .store-name {
+      font-size: 17px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      line-height: 1.2;
+    }
+    .report-badge {
+      display: inline-block;
+      margin: 6px auto;
+      padding: 3px 8px;
+      border: 2px solid #000000;
+      font-size: 14px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin: 2.5px 0;
+      font-size: 12.5px;
+    }
+    .divider-solid {
+      border-top: 2px solid #000000;
+      margin: 6px 0;
+    }
+    .divider-dashed {
+      border-top: 1.5px dashed #000000;
+      margin: 5px 0;
+    }
+    .section-title {
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 6px 0 3px 0;
+      background: #eeeeee;
+      padding: 2px 4px;
+    }
+    .items-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+      margin: 4px 0;
+    }
+    .items-table td {
+      padding: 2.5px 0;
+    }
+    .grand-box {
+      border: 2px solid #000000;
+      padding: 6px;
+      margin: 6px 0;
+      background: #f9f9f9;
+    }
+    .diff-box {
+      border: 2px solid #000000;
+      padding: 5px;
+      margin: 6px 0;
+      text-align: center;
+      font-size: 13px;
+    }
+    .signature-area {
+      margin-top: 14px;
+      padding-top: 8px;
+      border-top: 1.5px dashed #000000;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div class="ticket-wrapper">
+    <div class="text-center">
+      <div class="store-name">${escapeHtml(business.name)}</div>
+      ${business.address ? `<div style="font-size: 11.5px; font-weight: 700;">${escapeHtml(business.address)}</div>` : ''}
+      ${business.phone ? `<div style="font-size: 11.5px; font-weight: 800;">Tél: ${escapeHtml(business.phone)}</div>` : ''}
+      <div style="font-size: 11px;">Régime : ${escapeHtml(business.tradeType)} · Dirigeant : ${escapeHtml(business.ownerName)}</div>
+
+      <div class="report-badge">RAPPORT DE CAISSE Z</div>
+      <div style="font-size: 13px; font-weight: 900; letter-spacing: 0.5px;">${escapeHtml(zNum)}</div>
+    </div>
+
+    <div class="divider-solid"></div>
+
+    <!-- Session details -->
+    <div class="row">
+      <span>Ouverture caisse :</span>
+      <span class="bold">${escapeHtml(formatDate(session.openedAt))}</span>
+    </div>
+    <div class="row">
+      <span>Clôture caisse :</span>
+      <span class="bold">${escapeHtml(formatDate(session.closedAt || new Date().toISOString()))}</span>
+    </div>
+    <div class="row">
+      <span>Caissier(ère) :</span>
+      <span class="bold">${escapeHtml(session.cashierName)}</span>
+    </div>
+    <div class="row">
+      <span>Poste caisse :</span>
+      <span class="bold">Caisse N°1 Principale</span>
+    </div>
+
+    <div class="divider-solid"></div>
+
+    <!-- Sales Synthesis -->
+    <div class="section-title">1. SYNTHÈSE DES VENTES</div>
+    <div class="row">
+      <span>Nombre de tickets émis :</span>
+      <span class="bold font-mono">${session.totalSalesCount}</span>
+    </div>
+    <div class="row">
+      <span>Panier moyen client :</span>
+      <span class="bold font-mono">${formatMoney(avgBasket, cur)}</span>
+    </div>
+    ${
+      (session.discountsTotal || 0) > 0
+        ? `<div class="row">
+            <span>Remises totales accordées :</span>
+            <span class="bold font-mono">-${formatMoney(session.discountsTotal || 0, cur)}</span>
+          </div>`
+        : ''
+    }
+
+    <div class="grand-box">
+      <div class="row" style="font-size: 14.5px;">
+        <span class="bold">CHIFFRE D'AFFAIRES NET :</span>
+        <span class="bold font-mono">${formatMoney(session.totalSalesAmount, cur)}</span>
+      </div>
+    </div>
+
+    <!-- Payment Breakdown -->
+    <div class="section-title">2. ENCAISSEMENTS PAR MODE</div>
+    <div class="row">
+      <span>Espèces (Cash) :</span>
+      <span class="bold font-mono">${formatMoney(session.cashSales || 0, cur)}</span>
+    </div>
+    <div class="row">
+      <span>Mobile Money (Wave/OM/Moov) :</span>
+      <span class="bold font-mono">${formatMoney(session.mobileMoneySales || 0, cur)}</span>
+    </div>
+    <div class="row">
+      <span>Carte Bancaire :</span>
+      <span class="bold font-mono">${formatMoney(session.cardSales || 0, cur)}</span>
+    </div>
+    <div class="row">
+      <span>Ventes à Crédit (Arriérés) :</span>
+      <span class="bold font-mono">${formatMoney(session.creditSales || 0, cur)}</span>
+    </div>
+    ${
+      (session.creditSettlementsCash || 0) > 0
+        ? `<div class="row" style="border-top: 1px dotted #000; padding-top: 2px;">
+            <span>+ Règlements créances en espèces :</span>
+            <span class="bold font-mono">+${formatMoney(session.creditSettlementsCash || 0, cur)}</span>
+          </div>`
+        : ''
+    }
+
+    <!-- Cash drawer reconciliation -->
+    <div class="section-title">3. RAPPROCHEMENT DU TIROIR-CAISSE</div>
+    <div class="row">
+      <span>Fond de caisse initial :</span>
+      <span class="bold font-mono">${formatMoney(session.openingFloat, cur)}</span>
+    </div>
+    <div class="row">
+      <span>+ Encaissements espèces :</span>
+      <span class="bold font-mono">+${formatMoney((session.cashSales || 0) + (session.creditSettlementsCash || 0), cur)}</span>
+    </div>
+    <div class="row" style="border-top: 1px solid #000; padding-top: 2px;">
+      <span class="bold">Espèces théoriques attendues :</span>
+      <span class="bold font-mono">${formatMoney(session.expectedCash, cur)}</span>
+    </div>
+    <div class="row">
+      <span class="bold">Espèces réelles comptées :</span>
+      <span class="bold font-mono">${formatMoney(session.actualCash || 0, cur)}</span>
+    </div>
+
+    <!-- Difference box -->
+    <div class="diff-box">
+      ${
+        isPerfect
+          ? `<div class="bold" style="font-size: 14px;">ÉCART DE CAISSE : 0 ${escapeHtml(cur)}</div>
+             <div style="font-size: 11px;">CAISSE PARFAITE (ÉQUILIBRÉE)</div>`
+          : isSurplus
+          ? `<div class="bold" style="font-size: 14px;">EXCÉDENT DE CAISSE : +${formatMoney(diff, cur)}</div>
+             <div style="font-size: 11px;">Surplus d'espèces constaté en caisse</div>`
+          : `<div class="bold" style="font-size: 14px;">DÉFICIT DE CAISSE : ${formatMoney(diff, cur)}</div>
+             <div style="font-size: 11px;">Manquant d'espèces à justifier</div>`
+      }
+    </div>
+
+    ${denomRows}
+
+    ${
+      session.notes
+        ? `<div class="divider-dashed"></div>
+           <div style="font-size: 11.5px;">
+             <strong>Observation caissier :</strong><br>
+             <em>${escapeHtml(session.notes)}</em>
+           </div>`
+        : ''
+    }
+
+    <!-- Signatures -->
+    <div class="signature-area">
+      <table style="width: 100%;">
+        <tr>
+          <td style="width: 50%; vertical-align: top;">
+            <strong>Visa Caissier(ère) :</strong><br><br><br>
+            ______________________
+          </td>
+          <td style="width: 50%; text-align: right; vertical-align: top;">
+            <strong>Visa Direction / Gérant :</strong><br><br><br>
+            ______________________
+          </td>
+        </tr>
+      </table>
+      <div class="text-center" style="margin-top: 10px; font-size: 10px; font-weight: 800;">
+        *** CLÔTURE DÉFINITIVE ARCHIVÉE · SYSTÈME KASSAPRO POS ***
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+/**
+ * Builds clean plain-text Z-Report summary for WhatsApp / SMS
+ */
+export function buildThermalZReportText(session: CashRegisterSession, business: Business): string {
+  const diff = session.cashDifference || 0;
+  const isPerfect = diff === 0;
+  const cur = business.currency || 'FCFA';
+  const zNum = session.zNumber || `Z-${session.id.slice(-6).toUpperCase()}`;
+
+  const lines = [
+    `🧾 *RAPPORT DE CLÔTURE DE CAISSE (TICKET Z)*`,
+    `🏪 *Commerce :* ${business.name}`,
+    `🆔 *N° Rapport :* ${zNum}`,
+    `👤 *Caissier(e) :* ${session.cashierName}`,
+    `📅 *Ouverture :* ${formatDate(session.openedAt)}`,
+    `🔒 *Clôture :* ${formatDate(session.closedAt || new Date().toISOString())}`,
+    `------------------------------------------`,
+    `💰 *CHIFFRE D'AFFAIRES NET :* ${formatMoney(session.totalSalesAmount, cur)}`,
+    `🧾 *Volume de Ventes :* ${session.totalSalesCount} tickets`,
+    `🛒 *Panier Moyen :* ${
+      session.totalSalesCount > 0 ? formatMoney(Math.round(session.totalSalesAmount / session.totalSalesCount), cur) : `0 ${cur}`
+    }`,
+    `------------------------------------------`,
+    `💳 *ENCAISSEMENTS PAR MODE :*`,
+    `• Espèces : ${formatMoney(session.cashSales || 0, cur)}`,
+    `• Mobile Money : ${formatMoney(session.mobileMoneySales || 0, cur)}`,
+    `• Carte Bancaire : ${formatMoney(session.cardSales || 0, cur)}`,
+    `• Vente à Crédit : ${formatMoney(session.creditSales || 0, cur)}`,
+    (session.creditSettlementsCash || 0) > 0 ? `• Règlements créances reçus : +${formatMoney(session.creditSettlementsCash || 0, cur)}` : '',
+    `------------------------------------------`,
+    `💵 *CONTRÔLE DU TIROIR-CAISSE :*`,
+    `• Fond initial : ${formatMoney(session.openingFloat, cur)}`,
+    `• Espèces théoriques : ${formatMoney(session.expectedCash, cur)}`,
+    `• Espèces réelles comptées : ${formatMoney(session.actualCash || 0, cur)}`,
+    `🎯 *ÉCART DE CAISSE :* ${isPerfect ? `0 ${cur} (Caisse Parfaite ✅)` : diff > 0 ? `+${formatMoney(diff, cur)} (Excédent 🔵)` : `${formatMoney(diff, cur)} (Déficit / Manquant 🔴)`}`,
+    session.notes ? `📝 *Note :* ${session.notes}` : '',
+    `------------------------------------------`,
+    `Généré automatiquement par KassaPro POS`,
+  ].filter(Boolean);
+
+  return lines.join('\n');
+}
+
+/**
+ * Prints the Z-Report via dedicated isolated hidden iframe.
+ */
+export async function printThermalZReport(
+  session: CashRegisterSession,
+  business: Business
+): Promise<{ success: boolean; method: 'iframe' | 'window' }> {
+  const html = buildThermalZReportHtml(session, business);
+
+  try {
+    let iframe = document.getElementById('thermal-z-frame') as HTMLIFrameElement | null;
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.id = 'thermal-z-frame';
+      iframe.style.position = 'fixed';
+      iframe.style.top = '-9999px';
+      iframe.style.left = '-9999px';
+      iframe.style.width = '80mm';
+      iframe.style.height = '100px';
+      iframe.style.border = '0';
+      iframe.style.visibility = 'hidden';
+      document.body.appendChild(iframe);
+    }
+
+    const doc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const win = iframe.contentWindow;
+      if (win) {
+        win.focus();
+        win.print();
+        return { success: true, method: 'iframe' };
+      }
+    }
+  } catch (err) {
+    console.warn('Iframe Z-report printing error, fallback to window.print():', err);
+  }
+
+  // Fallback
+  window.focus();
+  window.print();
+  return { success: true, method: 'window' };
+}
+
+/**
+ * Copies the Z-Report text summary to clipboard (e.g. for WhatsApp / SMS)
+ */
+export async function copyZReportToClipboard(session: CashRegisterSession, business: Business): Promise<boolean> {
+  const text = buildThermalZReportText(session, business);
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const success = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return success;
+  } catch (err) {
+    console.error('Failed to copy Z-report to clipboard:', err);
     return false;
   }
 }
