@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Percent,
   Check,
+  CheckCircle,
   Keyboard,
   Layers,
   Printer,
@@ -80,6 +81,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   const [amountReceived, setAmountReceived] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [completedTx, setCompletedTx] = useState<SaleTransaction | null>(null);
+  const [lastSaleTx, setLastSaleTx] = useState<SaleTransaction | null>(null);
 
   // Mode Caisse Rapide (Saisie Directe du Montant & Multi-Articles & Quantités) State
   const [directAmount, setDirectAmount] = useState<string>('');
@@ -102,7 +104,12 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   const [showCustomerModal, setShowCustomerModal] = useState<boolean>(false);
   const [showCameraScannerModal, setShowCameraScannerModal] = useState<boolean>(false);
   const [quickBarcodeNotice, setQuickBarcodeNotice] = useState<string | null>(null);
-  const [globalNotice, setGlobalNotice] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [globalNotice, setGlobalNotice] = useState<{
+    message: string;
+    type: 'success' | 'error' | 'info';
+    actionLabel?: string;
+    onAction?: () => void;
+  } | null>(null);
 
   // Refs for keyboard navigation & direct typing
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -171,7 +178,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   // Handle printing the latest receipt formatted for thermal printers
   const handlePrintTicket = async () => {
     const transactions = store.getTransactions(business.id);
-    const targetTx = completedTx || transactions[0];
+    const targetTx = completedTx || lastSaleTx || transactions[0];
 
     if (!targetTx) {
       playSoundEffect('error');
@@ -323,12 +330,13 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
           playSoundEffect('beep');
         }
       } else if (e.key === 'Enter' && !isInputActive) {
-        // Enter key: Validate sale
+        // Enter key: Validate without printing (ultra-fast). Shift+Enter or Ctrl+Enter: Validate & Print.
         e.preventDefault();
+        const shouldPrint = e.shiftKey || e.ctrlKey;
         if (posMode === 'catalog') {
-          handleValidateSale();
+          handleValidateSale(shouldPrint);
         } else {
-          handleValidateDirectSale();
+          handleValidateDirectSale(shouldPrint);
         }
       } else if (posMode === 'direct' && !isInputActive) {
         // Handle direct numeric keyboard entry if directInputRef is not already focused
@@ -559,8 +567,8 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
   }, [products, posMode]);
 
-  // Mode Catalogue: Validate sale
-  const handleValidateSale = () => {
+  // Mode Catalogue: Validate sale (supporte la validation avec ou sans impression de ticket)
+  const handleValidateSale = (shouldPrint: boolean = false) => {
     if (cart.length === 0) {
       playSoundEffect('error');
       return;
@@ -609,13 +617,28 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       changeDue: paymentMethod === 'cash' ? changeDue : 0,
     });
 
-    setCompletedTx(tx);
+    setLastSaleTx(tx);
     setIsProcessing(false);
 
     // Reset cart
     setCart([]);
     setDiscountTotal(0);
     setAmountReceived('');
+
+    if (shouldPrint) {
+      setCompletedTx(tx);
+    } else {
+      playSoundEffect('cash');
+      setGlobalNotice({
+        message: `Vente #${tx.id.slice(-6)} validée SANS imprimer · Total : ${formatMoney(tx.totalAmount)}${tx.changeDue > 0 ? ` · Monnaie à rendre : ${formatMoney(tx.changeDue)}` : ''}`,
+        type: 'success',
+        actionLabel: 'Imprimer ticket (F12)',
+        onAction: () => setCompletedTx(tx),
+      });
+      setTimeout(() => {
+        setGlobalNotice((prev) => (prev?.type === 'success' ? null : prev));
+      }, 5000);
+    }
   };
 
   // Mode Caisse Rapide: Add item/amount to current ticket with quantity
@@ -714,8 +737,8 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     });
   };
 
-  // Mode Caisse Rapide: Validate sale (accumulates all directItems + current typed amount and attaches cashier and customer)
-  const handleValidateDirectSale = () => {
+  // Mode Caisse Rapide: Validate sale (supporte la validation avec ou sans impression de ticket)
+  const handleValidateDirectSale = (shouldPrint: boolean = false) => {
     const itemsToSale: {
       productId: string;
       productName: string;
@@ -812,7 +835,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       changeDue: directPaymentMethod === 'cash' ? Math.max(0, (numDirectReceived || totalToPay) - totalToPay) : 0,
     });
 
-    setCompletedTx(tx);
+    setLastSaleTx(tx);
     setIsProcessing(false);
 
     // Reset direct register ready for the next customer
@@ -826,6 +849,21 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     setTimeout(() => {
       directInputRef.current?.focus();
     }, 100);
+
+    if (shouldPrint) {
+      setCompletedTx(tx);
+    } else {
+      playSoundEffect('cash');
+      setGlobalNotice({
+        message: `Vente #${tx.id.slice(-6)} validée SANS imprimer · Total : ${formatMoney(tx.totalAmount)}${tx.changeDue > 0 ? ` · Monnaie à rendre : ${formatMoney(tx.changeDue)}` : ''}`,
+        type: 'success',
+        actionLabel: 'Imprimer ticket (F12)',
+        onAction: () => setCompletedTx(tx),
+      });
+      setTimeout(() => {
+        setGlobalNotice((prev) => (prev?.type === 'success' ? null : prev));
+      }, 5000);
+    }
   };
 
   // Filter products for catalog mode
@@ -978,9 +1016,27 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               : 'bg-cyan-950/60 border-cyan-500/30 text-cyan-300'
           }`}
         >
-          <div className="flex items-center gap-2">
-            <Printer className="w-4 h-4 shrink-0" />
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {globalNotice.type === 'success' ? (
+              <CheckCircle className="w-4 h-4 shrink-0 text-emerald-500" />
+            ) : (
+              <Printer className="w-4 h-4 shrink-0" />
+            )}
             <span>{globalNotice.message}</span>
+            {globalNotice.actionLabel && globalNotice.onAction && (
+              <button
+                type="button"
+                onClick={globalNotice.onAction}
+                className={`ml-2 px-2.5 py-0.5 rounded text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                  isLight
+                    ? 'bg-white hover:bg-slate-100 text-slate-800 border-slate-300 shadow-2xs'
+                    : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/40'
+                }`}
+              >
+                <Printer className="w-3 h-3" />
+                <span>{globalNotice.actionLabel}</span>
+              </button>
+            )}
           </div>
           <button
             onClick={() => setGlobalNotice(null)}
@@ -1596,32 +1652,68 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               )}
             </div>
 
-            {/* 5. BIG UNMISSIBLE PINNED VALIDATION BUTTON (Zero-Scroll Guarantee) */}
-            <button
-              type="button"
-              onClick={handleValidateDirectSale}
-              disabled={totalDirectToPay <= 0 || isProcessing}
-              className={`w-full py-3 sm:py-3.5 px-4 rounded-xl font-black text-sm sm:text-base flex items-center justify-between transition-all cursor-pointer shadow-md active:scale-[0.99] shrink-0 ${
-                totalDirectToPay <= 0
-                  ? isLight
-                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                    : 'bg-neutral-900 text-neutral-600 cursor-not-allowed border border-neutral-800'
-                  : isLight
-                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30'
-                  : 'bg-gradient-to-r from-emerald-400 via-cyan-400 to-emerald-400 text-neutral-950 font-black shadow-[0_0_20px_rgba(16,185,129,0.5)]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Check className="w-5 h-5 stroke-[3]" />
-                <span>ENCAISSER & VALIDER [Entrée ↵]</span>
-              </div>
-              <div className="font-mono text-sm sm:text-base font-black tabular-nums">
-                {formatMoney(totalDirectToPay)}
-                <span className="text-[11px] font-normal opacity-80 ml-1">
-                  ({totalDirectItemsCount} art.)
+            {/* 5. VALIDATION BUTTONS (VALIDER SANS IMPRIMER vs VALIDER & IMPRIMER) */}
+            <div className="flex items-stretch gap-2 shrink-0">
+              {/* Bouton Principal: VALIDER SANS IMPRIMER (Ultra-rapide, zéro ticket papier) */}
+              <button
+                type="button"
+                onClick={() => handleValidateDirectSale(false)}
+                disabled={totalDirectToPay <= 0 || isProcessing}
+                className={`flex-1 py-3 sm:py-3.5 px-3.5 sm:px-4 rounded-xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer shadow-md active:scale-[0.99] ${
+                  totalDirectToPay <= 0
+                    ? isLight
+                      ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                      : 'bg-neutral-900 text-neutral-600 cursor-not-allowed border border-neutral-800'
+                    : isLight
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30'
+                    : 'bg-gradient-to-r from-emerald-400 via-cyan-400 to-emerald-400 text-neutral-950 font-black shadow-[0_0_20px_rgba(16,185,129,0.5)]'
+                }`}
+                title="Encaisser et valider immédiatement sans imprimer de ticket (Touche Entrée ↵)"
+              >
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <Check className="w-5 h-5 stroke-[3] shrink-0" />
+                  <div className="text-left">
+                    <span className="block leading-tight font-black uppercase text-[11px] sm:text-xs tracking-wide">
+                      VALIDER SANS IMPRIMER
+                    </span>
+                    <span className="text-[9px] sm:text-[10px] font-normal opacity-90 block">
+                      Enregistrement immédiat [Entrée ↵]
+                    </span>
+                  </div>
+                </div>
+                <div className="font-mono text-sm sm:text-base font-black tabular-nums text-right ml-2 shrink-0">
+                  {formatMoney(totalDirectToPay)}
+                  <span className="text-[10px] font-normal opacity-85 ml-1 block sm:inline">
+                    ({totalDirectItemsCount} art.)
+                  </span>
+                </div>
+              </button>
+
+              {/* Bouton Secondaire: VALIDER & IMPRIMER TICKET */}
+              <button
+                type="button"
+                onClick={() => handleValidateDirectSale(true)}
+                disabled={totalDirectToPay <= 0 || isProcessing}
+                className={`py-3 sm:py-3.5 px-3 sm:px-3.5 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all border shadow-sm active:scale-[0.99] shrink-0 cursor-pointer ${
+                  totalDirectToPay <= 0
+                    ? isLight
+                      ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                      : 'bg-neutral-900 text-neutral-600 border-neutral-800 cursor-not-allowed'
+                    : isLight
+                    ? 'bg-white hover:bg-slate-100 text-slate-800 border-slate-300 hover:border-slate-400 shadow-2xs'
+                    : 'bg-[#0e1428] hover:bg-[#161f3d] text-cyan-300 border-cyan-500/40 shadow-[0_0_12px_rgba(0,242,254,0.15)]'
+                }`}
+                title="Valider la vente et imprimer le ticket de caisse thermique (Shift+Entrée)"
+              >
+                <Printer className="w-4 h-4 shrink-0" />
+                <span className="text-[11px] font-extrabold whitespace-nowrap leading-none">
+                  + Ticket
                 </span>
-              </div>
-            </button>
+                <span className="text-[9px] font-mono opacity-70 leading-none">
+                  [Shift+↵]
+                </span>
+              </button>
+            </div>
           </div>
 
           {/* ===================================================================== */}
@@ -2349,24 +2441,58 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 </div>
               )}
 
-              {/* Big Validate Button */}
-              <button
-                type="button"
-                onClick={handleValidateSale}
-                disabled={cart.length === 0 || isProcessing}
-                className={`w-full py-3.5 px-4 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99] cursor-pointer ${
-                  cart.length === 0
-                    ? isLight
-                      ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                      : 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
-                    : isLight
-                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
-                    : 'bg-gradient-to-r from-emerald-400 via-cyan-400 to-emerald-400 text-neutral-950 font-black shadow-[0_0_20px_rgba(16,185,129,0.5)]'
-                }`}
-              >
-                <Check className="w-5 h-5 stroke-[3]" />
-                <span>VALIDER & IMPRIMER [Entrée]</span>
-              </button>
+              {/* Validation Buttons (VALIDER SANS IMPRIMER vs VALIDER & IMPRIMER) */}
+              <div className="flex items-stretch gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleValidateSale(false)}
+                  disabled={cart.length === 0 || isProcessing}
+                  className={`flex-1 py-3 sm:py-3.5 px-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99] cursor-pointer ${
+                    cart.length === 0
+                      ? isLight
+                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                        : 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
+                      : isLight
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
+                      : 'bg-gradient-to-r from-emerald-400 via-cyan-400 to-emerald-400 text-neutral-950 font-black shadow-[0_0_20px_rgba(16,185,129,0.5)]'
+                  }`}
+                  title="Valider la vente sans impression (Touche Entrée ↵)"
+                >
+                  <Check className="w-4 h-4 sm:w-5 sm:h-5 stroke-[3] shrink-0" />
+                  <div className="text-left leading-tight">
+                    <span className="block font-black uppercase text-[11px] sm:text-xs tracking-wide">
+                      VALIDER SANS IMPRIMER
+                    </span>
+                    <span className="text-[9px] font-normal opacity-90 block">
+                      Enregistrement immédiat [Entrée]
+                    </span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleValidateSale(true)}
+                  disabled={cart.length === 0 || isProcessing}
+                  className={`py-3 sm:py-3.5 px-3 sm:px-3.5 rounded-xl font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all border shadow-sm active:scale-[0.99] shrink-0 cursor-pointer ${
+                    cart.length === 0
+                      ? isLight
+                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                        : 'bg-neutral-900 text-neutral-600 border-neutral-800 cursor-not-allowed'
+                      : isLight
+                      ? 'bg-white hover:bg-slate-100 text-slate-800 border-slate-300 hover:border-slate-400 shadow-2xs'
+                      : 'bg-[#0e1428] hover:bg-[#161f3d] text-cyan-300 border-cyan-500/40 shadow-[0_0_12px_rgba(0,242,254,0.15)]'
+                  }`}
+                  title="Valider la vente et imprimer le ticket de caisse (Shift+Entrée)"
+                >
+                  <Printer className="w-4 h-4 shrink-0" />
+                  <span className="text-[11px] font-extrabold whitespace-nowrap leading-none">
+                    + Ticket
+                  </span>
+                  <span className="text-[9px] font-mono opacity-70 leading-none">
+                    [Shift+↵]
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

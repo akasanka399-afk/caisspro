@@ -24,8 +24,9 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({ 
     { key: 'F9', desc: 'Règlement rapide en Espèces (Cash)' },
     { key: 'F10', desc: 'Règlement Mobile Money (Wave / Orange)' },
     { key: 'F11', desc: 'Règlement Carte Bancaire' },
-    { key: 'F12', desc: 'Imprimer le ticket de caisse thermique (80mm / 58mm)' },
-    { key: 'Entrée', desc: 'Valider et finaliser l\'encaissement (ou passer au prix depuis libellé)' },
+    { key: 'F12', desc: 'Imprimer / Réimprimer le dernier ticket de caisse' },
+    { key: 'Entrée', desc: 'Valider SANS imprimer (encaissement immédiat ultra-rapide)' },
+    { key: 'Shift + Entrée', desc: 'Valider ET imprimer le ticket thermique (ou Ctrl+Entrée)' },
     { key: 'Espace', desc: 'Appoint exact (espèces reçues = total à payer)' },
     { key: 'Échap', desc: 'Annuler / Retour au montant ou vider le ticket' },
   ];

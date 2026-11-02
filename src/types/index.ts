@@ -102,7 +102,10 @@ export interface SaleTransaction {
   changeDue: number;
   developerFee: number; // Fixed 20 F
   timestamp: string;
-  status: 'completed' | 'refunded';
+  status: 'completed' | 'refunded' | 'cancelled';
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancellationReason?: string;
 }
 
 export interface CashDenominations {

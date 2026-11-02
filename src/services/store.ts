@@ -1938,6 +1938,91 @@ class StoreService {
     return newTx;
   }
 
+  public cancelTransaction(data: {
+    transactionId: string;
+    reason: string;
+    cashierUser: User;
+    restoreStock?: boolean;
+  }): { success: boolean; transaction?: SaleTransaction; error?: string } {
+    const txs = this.getTransactions();
+    const tx = txs.find((t) => t.id === data.transactionId);
+    if (!tx) {
+      return { success: false, error: 'Transaction introuvable.' };
+    }
+
+    if (tx.status === 'cancelled') {
+      return { success: false, error: 'Cette transaction a déjà été annulée.' };
+    }
+
+    const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    tx.status = 'cancelled';
+    tx.cancelledAt = nowStr;
+    tx.cancelledBy = data.cashierUser.name;
+    tx.cancellationReason = data.reason;
+
+    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(txs));
+    syncDocToFirestore('transactions', tx.id, tx);
+
+    // Restore stock if requested
+    if (data.restoreStock !== false) {
+      const products = this.getProducts();
+      tx.items.forEach((it) => {
+        const prod = products.find((p) => p.id === it.productId);
+        if (prod) {
+          const prev = prod.stock;
+          prod.stock += it.quantity;
+          this.addStockMovement({
+            businessId: tx.businessId,
+            productId: prod.id,
+            productName: prod.name,
+            type: 'in',
+            quantity: it.quantity,
+            previousStock: prev,
+            newStock: prod.stock,
+            reason: `Annulation vente ticket ${tx.ticketNumber} (${data.reason})`,
+            userName: data.cashierUser.name,
+          });
+        }
+      });
+      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+    }
+
+    // If credit sale, reverse the customer debt
+    if (tx.paymentMethod === 'credit' && tx.customerId) {
+      const customers = this.getCustomers();
+      const customer = customers.find((c) => c.id === tx.customerId);
+      if (customer) {
+        customer.creditBalance = Math.max(0, customer.creditBalance - tx.totalAmount);
+        customer.totalPurchases = Math.max(0, customer.totalPurchases - tx.totalAmount);
+        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
+        syncDocToFirestore('customers', customer.id, customer);
+      }
+    }
+
+    // If cash sale, adjust active session expectedCash
+    if (tx.paymentMethod === 'cash') {
+      const activeSession = this.getActiveCashSession(tx.businessId);
+      if (activeSession) {
+        activeSession.expectedCash = Math.max(0, activeSession.expectedCash - tx.totalAmount);
+        activeSession.totalSalesAmount = Math.max(0, activeSession.totalSalesAmount - tx.totalAmount);
+        this.updateCashSession(activeSession);
+      }
+    }
+
+    // Notify owner
+    this.addNotification({
+      targetRole: 'owner',
+      businessId: tx.businessId,
+      title: `Vente annulée : ${tx.ticketNumber}`,
+      message: `La vente de ${tx.totalAmount} F CFA (Ticket ${tx.ticketNumber}) a été annulée par ${data.cashierUser.name}. Motif: ${data.reason}`,
+      type: 'security',
+      priority: 'high',
+    });
+
+    this.broadcast();
+    return { success: true, transaction: tx };
+  }
+
   // --- Cash Sessions ---
   public getSessions(businessId?: string): CashRegisterSession[] {
     const data = localStorage.getItem(STORAGE_KEYS.SESSIONS);

@@ -105,17 +105,18 @@ function MainLayout() {
     setCashSessionModalMode(null);
   };
 
-  // Handle cash session close & trigger official Z-Report
+  // Handle cash session close & trigger official Z-Report (or close without printing)
   const handleCloseCashSession = (
     sessionId: string,
     actualCash: number,
     notes?: string,
-    denominations?: CashDenominations
+    denominations?: CashDenominations,
+    openZReport: boolean = true
   ) => {
     const closed = store.closeCashSession(sessionId, actualCash, notes, denominations);
     setActiveSession(undefined);
     setCashSessionModalMode(null);
-    if (closed) {
+    if (closed && openZReport) {
       setActiveZReportSession(closed);
     }
   };

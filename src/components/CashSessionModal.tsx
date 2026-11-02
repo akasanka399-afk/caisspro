@@ -26,7 +26,8 @@ interface CashSessionModalProps {
     sessionId: string,
     actualCash: number,
     notes?: string,
-    denominations?: CashDenominations
+    denominations?: CashDenominations,
+    openZReport?: boolean
   ) => void;
   onDismiss: () => void;
 }
@@ -104,8 +105,7 @@ export const CashSessionModal: React.FC<CashSessionModalProps> = ({
     onOpenSession(floatVal);
   };
 
-  const handleSubmitClose = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleExecuteClose = (openZReport: boolean = true) => {
     if (!session) return;
 
     const denoms: CashDenominations = {
@@ -121,7 +121,12 @@ export const CashSessionModal: React.FC<CashSessionModalProps> = ({
       p25: parseInt(denomP25, 10) || 0,
     };
 
-    onCloseSession(session.id, numActualCash, notes, denoms);
+    onCloseSession(session.id, numActualCash, notes, denoms, openZReport);
+  };
+
+  const handleSubmitClose = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleExecuteClose(true);
   };
 
   return (
@@ -506,23 +511,42 @@ export const CashSessionModal: React.FC<CashSessionModalProps> = ({
             </div>
 
             {/* Footer Buttons */}
-            <div className={`pt-3 flex justify-end gap-3 border-t ${isLight ? 'border-slate-200' : 'border-neutral-800'}`}>
+            <div className={`pt-3 flex flex-wrap items-center justify-between gap-2.5 border-t ${isLight ? 'border-slate-200' : 'border-neutral-800'}`}>
               <button
                 type="button"
                 onClick={onDismiss}
-                className={`px-4 py-2 text-xs font-medium rounded-xl ${
+                className={`px-4 py-2 text-xs font-medium rounded-xl transition-colors ${
                   isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-neutral-800 text-neutral-300 hover:text-white'
                 }`}
               >
                 Annuler
               </button>
-              <button
-                type="submit"
-                className="px-5 py-2.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition-all flex items-center gap-2 shadow-sm cursor-pointer"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Valider Clôture & Afficher Rapport Z</span>
-              </button>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleExecuteClose(false)}
+                  className={`px-4 py-2 text-xs font-bold rounded-xl transition-all border flex items-center gap-1.5 cursor-pointer ${
+                    isLight
+                      ? 'bg-white hover:bg-slate-100 text-slate-800 border-slate-300 shadow-2xs'
+                      : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border-neutral-700'
+                  }`}
+                  title="Clôturer le service de caisse sans afficher ni imprimer le ticket Z"
+                >
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Clôturer sans imprimer</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExecuteClose(true)}
+                  className="px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition-all flex items-center gap-2 shadow-sm cursor-pointer"
+                  title="Clôturer la session et imprimer le rapport Z officiel"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Clôturer & Imprimer Z</span>
+                </button>
+              </div>
             </div>
           </form>
         )}
