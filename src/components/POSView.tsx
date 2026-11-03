@@ -956,6 +956,19 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
             </kbd>
           </button>
 
+          {/* Badge statut Mode Sans Impression Actif */}
+          <div
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all ${
+              isLight
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                : 'bg-emerald-950/40 text-emerald-300 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+            }`}
+            title="Validation sans impression active par défaut [Touche Entrée]. Cliquez sur [+ Ticket] ou Shift+Entrée si le client souhaite un ticket papier."
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Sans impression : <span className="font-black text-emerald-600 dark:text-emerald-400">ACTIF</span></span>
+          </div>
+
           {/* Badge statut Douchette USB connectée */}
           <div
             className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border ${
