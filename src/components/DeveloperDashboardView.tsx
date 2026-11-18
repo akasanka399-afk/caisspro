@@ -31,7 +31,9 @@ import {
   EyeOff,
   Smartphone,
   Share2,
+  Shield,
 } from 'lucide-react';
+import { DigiSoliaAdminPanel } from '../digisolia/admin/DigiSoliaAdminPanel';
 
 interface DeveloperDashboardViewProps {
   currentUser: User;
@@ -59,7 +61,9 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
   const [users, setUsers] = useState<User[]>([]);
   const [transactions, setTransactions] = useState<SaleTransaction[]>([]);
   const [notifications, setNotifications] = useState<PushNotification[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'businesses' | 'users' | 'notifications'>('overview');
+  const [activeTab, setActiveTab] = useState<
+    'overview' | 'businesses' | 'users' | 'notifications' | 'digisolia-admin'
+  >('overview');
 
   // Security Gate state (Simulates authenticated web console)
   const [isUnlocked, setIsUnlocked] = useState<boolean>(currentUser.role === 'developer');
@@ -608,6 +612,19 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
         >
           Notifications Push Automatisées ({notifications.length})
         </button>
+        <button
+          onClick={() => setActiveTab('digisolia-admin')}
+          className={`px-3.5 py-1.5 text-xs font-bold rounded-lg whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'digisolia-admin'
+              ? 'bg-[#163B65] text-white shadow-xs'
+              : isLight
+              ? 'bg-white text-[#163B65] hover:bg-slate-50 border border-[#2783C7]/40'
+              : 'bg-neutral-900 text-sky-300 hover:text-white border border-sky-500/40'
+          }`}
+        >
+          <Shield className="w-3.5 h-3.5" />
+          <span>Espace Admin DigiSolia</span>
+        </button>
       </div>
 
       {/* TAB 1: OVERVIEW & REAL-TIME SYNC BUS */}
@@ -1138,6 +1155,9 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
           </div>
         </div>
       )}
+
+      {/* TAB 5: ESPACE ADMIN DIGISOLIA (DIGISOLIA ADMIN MULTI-APPS) */}
+      {activeTab === 'digisolia-admin' && <DigiSoliaAdminPanel embedded />}
 
       {/* Modal: Password Reset */}
       {resetTargetUser && (

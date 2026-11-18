@@ -2,101 +2,376 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Default deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL HARDENED PRIMITIVES ---
     function isValidId(id) {
       return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    function isAuthenticated() {
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
       return request.auth != null;
     }
 
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedSuperAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'akasanka399@gmail.com';
+    }
+
+    function adminDocExists() {
+      return isVerifiedUser()
+        && exists(/databases/$(database)/documents/administrators/$(request.auth.uid))
+        && get(/databases/$(database)/documents/administrators/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function adminRole() {
+      return get(/databases/$(database)/documents/administrators/$(request.auth.uid)).data.role;
+    }
+
+    function isSuperAdmin() {
+      return isBootstrappedSuperAdmin() || (adminDocExists() && adminRole() == 'super_admin');
+    }
+
+    function isDigiSoliaAdmin() {
+      return isBootstrappedSuperAdmin()
+        || (adminDocExists() && adminRole() in ['super_admin', 'app_admin', 'support_agent', 'stats_reader']);
+    }
+
+    function canManageApp(appId) {
+      return isSuperAdmin()
+        || (adminDocExists()
+            && adminRole() == 'app_admin'
+            && appId in get(/databases/$(database)/documents/administrators/$(request.auth.uid)).data.assignedApps);
+    }
+
+    function canHandleSupport(appId) {
+      return canManageApp(appId)
+        || (adminDocExists()
+            && adminRole() == 'support_agent'
+            && (get(/databases/$(database)/documents/administrators/$(request.auth.uid)).data.assignedApps.size() == 0
+                || appId in get(/databases/$(database)/documents/administrators/$(request.auth.uid)).data.assignedApps));
+    }
+
+    // --- DIGISOLIA VALIDATION BLUEPRINTS ---
+    function isValidApp(data) {
+      return data.keys().hasAll(['id', 'appId', 'name', 'version', 'status'])
+        && data.keys().hasOnly([
+          'id', 'appId', 'name', 'shortDescription', 'category', 'version',
+          'status', 'usersCount', 'primaryColor', 'secondaryColor',
+          'supportWhatsapp', 'supportPhone', 'supportEmail', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.appId)
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
+        && data.version is string && data.version.size() >= 1 && data.version.size() <= 20
+        && data.status in ['active', 'maintenance', 'beta', 'archived']
+        && (!('shortDescription' in data) || (data.shortDescription is string && data.shortDescription.size() <= 300))
+        && (!('category' in data) || (data.category is string && data.category.size() <= 60))
+        && (!('usersCount' in data) || (data.usersCount is number && data.usersCount >= 0))
+        && (!('primaryColor' in data) || (data.primaryColor is string && data.primaryColor.size() <= 20))
+        && (!('secondaryColor' in data) || (data.secondaryColor is string && data.secondaryColor.size() <= 20))
+        && (!('supportWhatsapp' in data) || (data.supportWhatsapp is string && data.supportWhatsapp.size() <= 30))
+        && (!('supportPhone' in data) || (data.supportPhone is string && data.supportPhone.size() <= 30))
+        && (!('supportEmail' in data) || (data.supportEmail is string && data.supportEmail.size() <= 120))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 40));
+    }
+
+    function isValidFeedback(data, appId) {
+      return data.keys().hasAll(['id', 'appId', 'authorUid', 'category', 'message', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'appId', 'authorUid', 'userId', 'userName', 'userEmail',
+          'category', 'rating', 'message', 'status', 'adminResponse',
+          'handledBy', 'handledAt', 'createdAt'
+        ])
+        && isValidId(data.id)
+        && data.appId == appId
+        && data.authorUid is string && data.authorUid.size() > 0 && data.authorUid.size() <= 128
+        && data.category in ['comment', 'suggestion', 'bug', 'complaint']
+        && data.message is string && data.message.size() >= 5 && data.message.size() <= 2000
+        && data.status in ['pending', 'in_progress', 'resolved', 'rejected']
+        && data.createdAt is string && data.createdAt.size() > 0 && data.createdAt.size() <= 40
+        && (!('rating' in data) || (data.rating is number && data.rating >= 1 && data.rating <= 5))
+        && (!('userId' in data) || (data.userId is string && data.userId.size() <= 128))
+        && (!('userName' in data) || (data.userName is string && data.userName.size() <= 100))
+        && (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 120))
+        && (!('adminResponse' in data) || (data.adminResponse is string && data.adminResponse.size() <= 1500))
+        && (!('handledBy' in data) || (data.handledBy is string && data.handledBy.size() <= 120))
+        && (!('handledAt' in data) || (data.handledAt is string && data.handledAt.size() <= 40));
+    }
+
+    function isValidSupportTicket(data, appId) {
+      return data.keys().hasAll(['id', 'appId', 'authorUid', 'topic', 'priority', 'subject', 'description', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'appId', 'authorUid', 'userId', 'userName', 'userEmail', 'userPhone',
+          'topic', 'priority', 'subject', 'description', 'appVersion',
+          'status', 'adminResponse', 'handledBy', 'handledAt', 'createdAt'
+        ])
+        && isValidId(data.id)
+        && data.appId == appId
+        && data.authorUid is string && data.authorUid.size() > 0 && data.authorUid.size() <= 128
+        && data.topic in ['general', 'technical', 'hardware', 'sync', 'billing']
+        && data.priority in ['normal', 'high', 'urgent']
+        && data.subject is string && data.subject.size() >= 3 && data.subject.size() <= 160
+        && data.description is string && data.description.size() >= 10 && data.description.size() <= 2500
+        && data.status in ['pending', 'in_progress', 'resolved', 'rejected']
+        && data.createdAt is string && data.createdAt.size() > 0 && data.createdAt.size() <= 40
+        && (!('userId' in data) || (data.userId is string && data.userId.size() <= 128))
+        && (!('userName' in data) || (data.userName is string && data.userName.size() <= 100))
+        && (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 120))
+        && (!('userPhone' in data) || (data.userPhone is string && data.userPhone.size() <= 30))
+        && (!('appVersion' in data) || (data.appVersion is string && data.appVersion.size() <= 30))
+        && (!('adminResponse' in data) || (data.adminResponse is string && data.adminResponse.size() <= 1500))
+        && (!('handledBy' in data) || (data.handledBy is string && data.handledBy.size() <= 120))
+        && (!('handledAt' in data) || (data.handledAt is string && data.handledAt.size() <= 40));
+    }
+
+    function isValidAdministrator(data) {
+      return data.keys().hasAll(['id', 'email', 'name', 'role', 'assignedApps', 'status'])
+        && data.keys().hasOnly(['id', 'uid', 'email', 'name', 'role', 'assignedApps', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 120
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
+        && data.role in ['super_admin', 'app_admin', 'support_agent', 'stats_reader']
+        && data.assignedApps is list && data.assignedApps.size() <= 20
+        && (data.assignedApps.size() == 0 || data.assignedApps[0] is string)
+        && data.status in ['active', 'suspended']
+        && (!('uid' in data) || (data.uid is string && data.uid.size() <= 128))
+        && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 40))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 40));
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'actorUid', 'actorEmail', 'actorRole', 'action', 'targetPath', 'details', 'createdAt'])
+        && data.keys().hasOnly(['id', 'actorUid', 'actorEmail', 'actorRole', 'action', 'targetPath', 'details', 'createdAt'])
+        && isValidId(data.id)
+        && data.actorUid == request.auth.uid
+        && data.actorEmail is string && data.actorEmail.size() <= 120
+        && data.actorRole is string && data.actorRole.size() <= 40
+        && data.action is string && data.action.size() <= 100
+        && data.targetPath is string && data.targetPath.size() <= 200
+        && data.details is string && data.details.size() <= 500
+        && data.createdAt is string && data.createdAt.size() <= 40;
+    }
+
+    // --- DIGISOLIA ECOSYSTEM COLLECTIONS ---
+    match /apps/{appId} {
+      // Non-PII public app registry metadata (name, version, colors, support contacts)
+      allow get, list: if true;
+      allow create: if isValidId(appId) && isVerifiedUser() && isValidApp(incoming()) && (isSuperAdmin() || canManageApp(appId));
+      allow update: if isValidId(appId) && isVerifiedUser() && isValidApp(incoming()) && (isSuperAdmin() || canManageApp(appId))
+        && incoming().id == existing().id && incoming().appId == existing().appId;
+      allow delete: if isValidId(appId) && isSuperAdmin();
+
+      // Feedback Subcollection: apps/{appId}/feedback/{feedbackId}
+      match /feedback/{feedbackId} {
+        allow get: if isValidId(appId) && isValidId(feedbackId) && (
+          isDigiSoliaAdmin()
+          || (isVerifiedUser() && existing().authorUid == request.auth.uid)
+        );
+        allow list: if isDigiSoliaAdmin()
+          || (isVerifiedUser() && resource.data.authorUid == request.auth.uid);
+
+        allow create: if isValidId(appId) && isValidId(feedbackId)
+          && isVerifiedUser()
+          && isValidFeedback(incoming(), appId)
+          && incoming().authorUid == request.auth.uid
+          && incoming().status == 'pending'
+          && !('adminResponse' in incoming())
+          && !('handledBy' in incoming())
+          && exists(/databases/$(database)/documents/apps/$(appId));
+
+        allow update: if isValidId(appId) && isValidId(feedbackId)
+          && isVerifiedUser()
+          && isValidFeedback(incoming(), appId)
+          && incoming().authorUid == existing().authorUid
+          && incoming().appId == existing().appId
+          && incoming().createdAt == existing().createdAt
+          && canHandleSupport(appId)
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminResponse', 'handledBy', 'handledAt']);
+
+        allow delete: if isValidId(appId) && isValidId(feedbackId) && isSuperAdmin();
+      }
+
+      // Support Tickets Subcollection: apps/{appId}/support/{ticketId}
+      match /support/{ticketId} {
+        allow get: if isValidId(appId) && isValidId(ticketId) && (
+          isDigiSoliaAdmin()
+          || (isVerifiedUser() && existing().authorUid == request.auth.uid)
+        );
+        allow list: if isDigiSoliaAdmin()
+          || (isVerifiedUser() && resource.data.authorUid == request.auth.uid);
+
+        allow create: if isValidId(appId) && isValidId(ticketId)
+          && isVerifiedUser()
+          && isValidSupportTicket(incoming(), appId)
+          && incoming().authorUid == request.auth.uid
+          && incoming().status == 'pending'
+          && !('adminResponse' in incoming())
+          && !('handledBy' in incoming())
+          && exists(/databases/$(database)/documents/apps/$(appId));
+
+        allow update: if isValidId(appId) && isValidId(ticketId)
+          && isVerifiedUser()
+          && isValidSupportTicket(incoming(), appId)
+          && incoming().authorUid == existing().authorUid
+          && incoming().appId == existing().appId
+          && incoming().createdAt == existing().createdAt
+          && canHandleSupport(appId)
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'priority', 'adminResponse', 'handledBy', 'handledAt']);
+
+        allow delete: if isValidId(appId) && isValidId(ticketId) && isSuperAdmin();
+      }
+    }
+
+    // Administrators Registry (Strictly Protected RBAC)
+    match /administrators/{adminId} {
+      allow get: if isValidId(adminId) && (isDigiSoliaAdmin() || (isVerifiedUser() && request.auth.uid == adminId));
+      allow list: if isDigiSoliaAdmin();
+      allow create, update: if isValidId(adminId) && isSuperAdmin() && isValidAdministrator(incoming());
+      allow delete: if isValidId(adminId) && isSuperAdmin() && adminId != request.auth.uid;
+    }
+
+    // Immutable Admin Audit Logs
+    match /admin_audit_logs/{logId} {
+      allow get: if isValidId(logId) && isDigiSoliaAdmin();
+      allow list: if isDigiSoliaAdmin();
+      allow create: if isValidId(logId) && isDigiSoliaAdmin() && isValidAuditLog(incoming());
+      allow update, delete: if false;
+    }
+
+    // --- EXISTING DIGISOLIA POS (CAISSE PRO) COLLECTIONS (PRESERVED COMPATIBILITY) ---
     // Businesses
     match /businesses/{businessId} {
-      allow read: if true;
+      allow get: if isValidId(businessId);
+      allow list: if isSignedIn() || resource.data.id is string;
       allow create, update: if isValidId(businessId)
         && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120
         && request.resource.data.tradeType is string
         && request.resource.data.currency is string;
-      allow delete: if isAuthenticated();
+      allow delete: if isSignedIn() && isSuperAdmin();
     }
 
-    // Users
+    // Users (Preserves Caisse Pro local staff sync + hardens DAF authenticated user profiles)
     match /users/{userId} {
-      allow read: if true;
-      allow create, update: if isValidId(userId)
-        && request.resource.data.name is string && request.resource.data.name.size() > 0
-        && request.resource.data.role in ['developer', 'owner', 'manager', 'cashier']
-        && request.resource.data.status in ['active', 'suspended'];
-      allow delete: if isAuthenticated();
+      allow get: if isValidId(userId) && (
+        userId.matches('^usr_.*')
+        || (isVerifiedUser() && request.auth.uid == userId)
+        || isDigiSoliaAdmin()
+      );
+      allow list: if isDigiSoliaAdmin() || resource.data.id.matches('^usr_.*');
+      allow create: if isValidId(userId)
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120
+        && request.resource.data.role in ['developer', 'owner', 'manager', 'cashier', 'user']
+        && request.resource.data.status in ['active', 'suspended']
+        && (
+          userId.matches('^usr_.*')
+          || (isVerifiedUser() && request.auth.uid == userId && request.resource.data.role == 'user')
+          || isSuperAdmin()
+        );
+      allow update: if isValidId(userId)
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120
+        && request.resource.data.status in ['active', 'suspended']
+        && (
+          userId.matches('^usr_.*')
+          || (isVerifiedUser() && request.auth.uid == userId && request.resource.data.role == resource.data.role && request.resource.data.status == resource.data.status)
+          || isSuperAdmin()
+        );
+      allow delete: if isSignedIn() && isSuperAdmin();
     }
 
     // Products
     match /products/{productId} {
-      allow read: if true;
+      allow get: if isValidId(productId);
+      allow list: if isSignedIn() || resource.data.businessId is string;
       allow create, update: if isValidId(productId)
-        && request.resource.data.name is string && request.resource.data.name.size() > 0
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 150
         && request.resource.data.salePrice is number && request.resource.data.salePrice >= 0
         && request.resource.data.stock is number;
-      allow delete: if isAuthenticated();
+      allow delete: if isSignedIn();
     }
 
     // Customers
     match /customers/{customerId} {
-      allow read: if true;
+      allow get: if isValidId(customerId);
+      allow list: if isSignedIn() || resource.data.businessId is string;
       allow create, update: if isValidId(customerId)
-        && request.resource.data.name is string && request.resource.data.name.size() > 0
-        && request.resource.data.phone is string;
-      allow delete: if isAuthenticated();
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+        && request.resource.data.phone is string && request.resource.data.phone.size() <= 30;
+      allow delete: if isSignedIn();
     }
 
     // Transactions
     match /transactions/{transactionId} {
-      allow read: if true;
+      allow get: if isValidId(transactionId);
+      allow list: if isSignedIn() || resource.data.businessId is string;
       allow create: if isValidId(transactionId)
         && request.resource.data.totalAmount is number && request.resource.data.totalAmount >= 0
-        && request.resource.data.ticketNumber is string
+        && request.resource.data.ticketNumber is string && request.resource.data.ticketNumber.size() <= 50
         && request.resource.data.paymentMethod in ['cash', 'mobile_money', 'card', 'credit'];
       allow update: if isValidId(transactionId)
         && request.resource.data.status in ['completed', 'refunded', 'cancelled'];
-      allow delete: if true;
+      allow delete: if isSignedIn() && isSuperAdmin();
     }
 
     // Credit settlements
     match /credit_settlements/{settlementId} {
-      allow read, write: if true;
+      allow get: if isValidId(settlementId);
+      allow list: if isSignedIn() || resource.data.businessId is string;
+      allow create, update: if isValidId(settlementId)
+        && request.resource.data.businessId is string
+        && request.resource.data.amount is number && request.resource.data.amount >= 0;
+      allow delete: if isSignedIn() && isSuperAdmin();
     }
 
     // Cash Register Sessions
     match /sessions/{sessionId} {
-      allow read: if true;
+      allow get: if isValidId(sessionId);
+      allow list: if isSignedIn() || resource.data.businessId is string;
       allow create, update: if isValidId(sessionId)
         && request.resource.data.status in ['open', 'closed']
         && request.resource.data.openingFloat is number;
-      allow delete: if isAuthenticated();
+      allow delete: if isSignedIn() && isSuperAdmin();
     }
 
-    // Push Notifications
+    // Push Notifications (Existing POS + DigiSolia Broadcast Notifications)
     match /notifications/{notificationId} {
-      allow read: if true;
+      allow get: if isValidId(notificationId);
+      allow list: if isSignedIn() || resource.data.targetRole is string;
       allow create, update: if isValidId(notificationId)
-        && request.resource.data.title is string && request.resource.data.title.size() > 0
-        && request.resource.data.message is string;
-      allow delete: if isAuthenticated();
+        && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 150
+        && request.resource.data.message is string && request.resource.data.message.size() <= 500;
+      allow delete: if isSignedIn() && isSuperAdmin();
     }
 
     // Stock Movements
     match /movements/{movementId} {
-      allow read: if true;
+      allow get: if isValidId(movementId);
+      allow list: if isSignedIn() || resource.data.businessId is string;
       allow create: if isValidId(movementId)
         && request.resource.data.productId is string
         && request.resource.data.type in ['in', 'out', 'sale', 'adjustment']
         && request.resource.data.quantity is number;
-      allow update, delete: if isAuthenticated();
+      allow update, delete: if isSignedIn();
     }
 
     // System connection test doc
     match /test/{testId} {
-      allow read, write: if true;
+      allow get: if testId == 'connection';
+      allow list, write: if false;
     }
   }
 }

@@ -2,7 +2,7 @@
   "entities": {
     "Business": {
       "title": "Business",
-      "description": "Information about a registered business or merchant in Caisse Pro",
+      "description": "Information about a registered business or merchant in DigiSolia POS (Caisse Pro)",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -23,14 +23,18 @@
     },
     "User": {
       "title": "User",
-      "description": "User profile with role-based access control for Caisse Pro",
+      "description": "User profile supporting both DigiSolia App Framework accounts and Caisse Pro staff roles",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "name": { "type": "string", "maxLength": 100 },
+        "uid": { "type": "string" },
+        "firstName": { "type": "string", "maxLength": 60 },
+        "lastName": { "type": "string", "maxLength": 60 },
+        "name": { "type": "string", "maxLength": 120 },
         "email": { "type": "string", "maxLength": 120 },
         "phone": { "type": "string", "maxLength": 30 },
-        "role": { "type": "string", "enum": ["developer", "owner", "manager", "cashier"] },
+        "appId": { "type": "string", "maxLength": 64 },
+        "role": { "type": "string", "enum": ["developer", "owner", "manager", "cashier", "user"] },
         "businessId": { "type": "string" },
         "pinCode": { "type": "string", "maxLength": 10 },
         "status": { "type": "string", "enum": ["active", "suspended"] },
@@ -38,7 +42,109 @@
         "lastLogin": { "type": "string" },
         "avatar": { "type": "string" }
       },
-      "required": ["id", "name", "role", "businessId", "status"]
+      "required": ["id", "name", "role", "status"]
+    },
+    "DigiSoliaApp": {
+      "title": "DigiSoliaApp",
+      "description": "Registered application inside the DigiSolia App Framework ecosystem",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-z0-9\\-]+$" },
+        "appId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 100 },
+        "shortDescription": { "type": "string", "maxLength": 300 },
+        "category": { "type": "string", "maxLength": 60 },
+        "version": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["active", "maintenance", "beta", "archived"] },
+        "usersCount": { "type": "number" },
+        "primaryColor": { "type": "string", "maxLength": 20 },
+        "secondaryColor": { "type": "string", "maxLength": 20 },
+        "supportWhatsapp": { "type": "string", "maxLength": 30 },
+        "supportPhone": { "type": "string", "maxLength": 30 },
+        "supportEmail": { "type": "string", "maxLength": 120 },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "appId", "name", "version", "status"]
+    },
+    "DigiSoliaFeedback": {
+      "title": "DigiSoliaFeedback",
+      "description": "User rating, comment, suggestion, bug report, or complaint scoped to an application",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "appId": { "type": "string", "maxLength": 64 },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 100 },
+        "userEmail": { "type": "string", "maxLength": 120 },
+        "category": { "type": "string", "enum": ["comment", "suggestion", "bug", "complaint"] },
+        "rating": { "type": "number" },
+        "message": { "type": "string", "minLength": 5, "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["pending", "in_progress", "resolved", "rejected"] },
+        "adminResponse": { "type": "string", "maxLength": 1500 },
+        "handledBy": { "type": "string", "maxLength": 120 },
+        "handledAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "appId", "category", "message", "status", "createdAt"]
+    },
+    "DigiSoliaSupportTicket": {
+      "title": "DigiSoliaSupportTicket",
+      "description": "Technical support or helpdesk request scoped to an application",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "appId": { "type": "string", "maxLength": 64 },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 100 },
+        "userEmail": { "type": "string", "maxLength": 120 },
+        "userPhone": { "type": "string", "maxLength": 30 },
+        "topic": { "type": "string", "enum": ["general", "technical", "hardware", "sync", "billing"] },
+        "priority": { "type": "string", "enum": ["normal", "high", "urgent"] },
+        "subject": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "description": { "type": "string", "minLength": 10, "maxLength": 2500 },
+        "appVersion": { "type": "string", "maxLength": 30 },
+        "status": { "type": "string", "enum": ["pending", "in_progress", "resolved", "rejected"] },
+        "adminResponse": { "type": "string", "maxLength": 1500 },
+        "handledBy": { "type": "string", "maxLength": 120 },
+        "handledAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "appId", "topic", "priority", "subject", "description", "status", "createdAt"]
+    },
+    "DigiSoliaAdministrator": {
+      "title": "DigiSoliaAdministrator",
+      "description": "Central DigiSolia Admin role assignment with application scope",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 120 },
+        "name": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["super_admin", "app_admin", "support_agent", "stats_reader"] },
+        "assignedApps": { "type": "array" },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "email", "name", "role", "status"]
+    },
+    "DigiSoliaAuditLog": {
+      "title": "DigiSoliaAuditLog",
+      "description": "Immutable administrative audit log for DigiSolia Admin operations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorEmail": { "type": "string", "maxLength": 120 },
+        "actorRole": { "type": "string", "maxLength": 40 },
+        "action": { "type": "string", "maxLength": 100 },
+        "targetPath": { "type": "string", "maxLength": 200 },
+        "details": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "actorUid", "actorEmail", "action", "createdAt"]
     },
     "Product": {
       "title": "Product",
@@ -79,7 +185,7 @@
     },
     "SaleTransaction": {
       "title": "SaleTransaction",
-      "description": "Completed or refunded retail sale transaction",
+      "description": "Completed, refunded or cancelled retail sale transaction",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -98,7 +204,7 @@
         "changeDue": { "type": "number" },
         "developerFee": { "type": "number" },
         "timestamp": { "type": "string" },
-        "status": { "type": "string", "enum": ["completed", "refunded"] }
+        "status": { "type": "string", "enum": ["completed", "refunded", "cancelled"] }
       },
       "required": ["id", "ticketNumber", "businessId", "cashierId", "totalAmount", "paymentMethod", "timestamp", "status"]
     },
@@ -126,16 +232,17 @@
     },
     "PushNotification": {
       "title": "PushNotification",
-      "description": "System and business event push notifications",
+      "description": "System, DigiSolia ecosystem and business event push notifications",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "appId": { "type": "string", "maxLength": 64 },
         "targetRole": { "type": "string", "enum": ["all", "developer", "owner", "manager", "cashier"] },
         "businessId": { "type": "string" },
         "businessName": { "type": "string", "maxLength": 120 },
         "title": { "type": "string", "maxLength": 150 },
         "message": { "type": "string", "maxLength": 500 },
-        "type": { "type": "string", "enum": ["sale_milestone", "low_stock", "subscription", "security", "system"] },
+        "type": { "type": "string", "enum": ["sale_milestone", "low_stock", "subscription", "security", "system", "digisolia_announcement"] },
         "timestamp": { "type": "string" },
         "read": { "type": "boolean" },
         "priority": { "type": "string", "enum": ["normal", "high", "urgent"] }
@@ -163,13 +270,33 @@
     }
   },
   "firestore": {
+    "/apps/{appId}": {
+      "schema": "DigiSoliaApp",
+      "description": "Registry of DigiSolia ecosystem applications and global stats"
+    },
+    "/apps/{appId}/feedback/{feedbackId}": {
+      "schema": "DigiSoliaFeedback",
+      "description": "Ratings, comments, suggestions, bug reports and complaints per app"
+    },
+    "/apps/{appId}/support/{ticketId}": {
+      "schema": "DigiSoliaSupportTicket",
+      "description": "Customer helpdesk and technical support tickets per app"
+    },
+    "/administrators/{adminId}": {
+      "schema": "DigiSoliaAdministrator",
+      "description": "Central DigiSolia Admin role assignments and permissions"
+    },
+    "/admin_audit_logs/{logId}": {
+      "schema": "DigiSoliaAuditLog",
+      "description": "Immutable log of administrative operations across DigiSolia Admin"
+    },
     "/businesses/{businessId}": {
       "schema": "Business",
       "description": "Registered merchant businesses and subscription records"
     },
     "/users/{userId}": {
       "schema": "User",
-      "description": "System and business user profiles with roles"
+      "description": "DigiSolia framework user profiles and Caisse Pro staff accounts"
     },
     "/products/{productId}": {
       "schema": "Product",
@@ -189,7 +316,7 @@
     },
     "/notifications/{notificationId}": {
       "schema": "PushNotification",
-      "description": "System, owner and cashier notifications"
+      "description": "System, DigiSolia ecosystem, owner and cashier notifications"
     },
     "/movements/{movementId}": {
       "schema": "StockMovement",

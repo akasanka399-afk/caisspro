@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Business, CashRegisterSession, CashDenominations, User } from './types';
+import { Business, CashRegisterSession, CashDenominations, PushNotification, User } from './types';
 import { store } from './services/store';
 import { ThemeProvider, useTheme } from './services/themeContext';
 import { TopBar } from './components/TopBar';
@@ -16,17 +16,41 @@ import { CustomersView } from './components/CustomersView';
 import { AuthModal } from './components/AuthModal';
 import { CashSessionModal } from './components/CashSessionModal';
 import { ZReportModal } from './components/ZReportModal';
+import {
+  AboutModule,
+  DashboardModule,
+  DigiSoliaShell,
+  ErrorBoundary,
+  FeedbackModule,
+  NotificationsModule,
+  ProfileModule,
+  SettingsModule,
+  SupportModule,
+  WelcomeModule,
+  hasSeenWelcomePage,
+  useDigiSoliaAuth,
+} from './digisolia';
 
 function MainLayout() {
   const { theme } = useTheme();
+  const { firebaseUser } = useDigiSoliaAuth();
+
   const [currentUser, setCurrentUser] = useState<User>(store.getCurrentUser());
   const [currentBusiness, setCurrentBusiness] = useState<Business>(() => {
     const user = store.getCurrentUser();
     const allBiz = store.getBusinesses();
     return allBiz.find((b) => b.id === user.businessId) || allBiz[0];
   });
+  const [notifications, setNotifications] = useState<PushNotification[]>(() =>
+    store.getNotifications(currentUser.role, currentBusiness.id)
+  );
+
+  const defaultBusinessView = currentUser.role === 'owner' ? 'owner-dashboard' : 'pos';
 
   const [activeView, setActiveView] = useState<string>(() => {
+    if (!hasSeenWelcomePage()) {
+      return 'daf-welcome';
+    }
     const user = store.getCurrentUser();
     if (user.role === 'owner') return 'owner-dashboard';
     return 'pos';
@@ -51,14 +75,19 @@ function MainLayout() {
       const biz = allBiz.find((b) => b.id === user.businessId) || allBiz[0];
       setCurrentBusiness(biz);
       setActiveSession(store.getActiveCashSession(biz.id));
+      setNotifications(store.getNotifications(user.role, biz.id));
     };
 
+    syncData();
     const unsub = store.subscribe(syncData);
     return () => unsub();
   }, [currentBusiness.id]);
 
-  // Enforce strict RBAC view confidentiality
+  // Enforce strict RBAC view confidentiality for business views while allowing DAF framework modules
   useEffect(() => {
+    const isDafView = activeView.startsWith('daf-');
+    if (isDafView) return;
+
     if (currentUser.role === 'cashier') {
       if (activeView !== 'pos') {
         setActiveView('pos');
@@ -83,7 +112,6 @@ function MainLayout() {
     const biz = allBiz.find((b) => b.id === user.businessId) || allBiz[0];
     setCurrentBusiness(biz);
 
-    // Switch view to match role (dev console is hidden behind 3 clicks + PIN)
     if (user.role === 'owner') {
       setActiveView('owner-dashboard');
     } else if (user.role === 'developer') {
@@ -122,12 +150,13 @@ function MainLayout() {
   };
 
   const isLight = theme === 'light';
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   return (
     <div
-      className={`min-h-screen flex flex-col font-sans transition-colors duration-200 ${
+      className={`min-h-screen md:h-screen md:overflow-hidden flex flex-col font-sans transition-colors duration-200 ${
         isLight
-          ? 'bg-slate-50 text-slate-900'
+          ? 'bg-[#F4F7FB] text-slate-900'
           : 'bg-[#05070c] text-neutral-100'
       }`}
     >
@@ -147,28 +176,79 @@ function MainLayout() {
         }}
       />
 
-      {/* Main Content Area based on Active View */}
-      <main className="flex-1 flex flex-col min-h-0">
-        {activeView === 'pos' && (
-          <POSView currentUser={currentUser} business={currentBusiness} />
-        )}
+      {/* DigiSolia App Framework Responsive Shell wrapping Existing App + DAF Modules */}
+      <DigiSoliaShell
+        activeView={activeView}
+        businessViewFallback={defaultBusinessView}
+        unreadNotificationsCount={unreadCount}
+        onNavigate={(view) => setActiveView(view)}
+      >
+        <main className="flex-1 flex flex-col min-h-full">
+          {/* --- EXISTING DIGISOLIA POS (CAISSE PRO) VIEWS --- */}
+          {activeView === 'pos' && (
+            <POSView currentUser={currentUser} business={currentBusiness} />
+          )}
 
-        {activeView === 'owner-dashboard' && (
-          <OwnerDashboardView currentUser={currentUser} business={currentBusiness} />
-        )}
+          {activeView === 'owner-dashboard' && (
+            <OwnerDashboardView currentUser={currentUser} business={currentBusiness} />
+          )}
 
-        {activeView === 'dev-dashboard' && (
-          <DeveloperDashboardView currentUser={currentUser} />
-        )}
+          {activeView === 'dev-dashboard' && (
+            <DeveloperDashboardView currentUser={currentUser} />
+          )}
 
-        {activeView === 'stocks' && (
-          <StockInventoryView currentUser={currentUser} business={currentBusiness} />
-        )}
+          {activeView === 'stocks' && (
+            <StockInventoryView currentUser={currentUser} business={currentBusiness} />
+          )}
 
-        {activeView === 'customers' && (
-          <CustomersView currentUser={currentUser} business={currentBusiness} />
-        )}
-      </main>
+          {activeView === 'customers' && (
+            <CustomersView currentUser={currentUser} business={currentBusiness} />
+          )}
+
+          {/* --- DIGISOLIA APP FRAMEWORK (DAF) COMMON MODULES --- */}
+          {activeView === 'daf-welcome' && (
+            <WelcomeModule
+              onStart={() => setActiveView(defaultBusinessView)}
+              onOpenSupport={() => setActiveView('daf-support')}
+            />
+          )}
+
+          {activeView === 'daf-dashboard' && (
+            <DashboardModule
+              currentUser={currentUser}
+              currentBusiness={currentBusiness}
+              notifications={notifications}
+              cloudUserEmail={firebaseUser?.email}
+              onNavigateApp={(view) => setActiveView(view)}
+              onNavigateFramework={(view) => setActiveView(view)}
+            />
+          )}
+
+          {activeView === 'daf-notifications' && (
+            <NotificationsModule notifications={notifications} />
+          )}
+
+          {activeView === 'daf-support' && (
+            <SupportModule currentUser={currentUser} />
+          )}
+
+          {activeView === 'daf-feedback' && (
+            <FeedbackModule currentUser={currentUser} />
+          )}
+
+          {activeView === 'daf-profile' && (
+            <ProfileModule
+              currentUser={currentUser}
+              currentBusiness={currentBusiness}
+              onOpenLocalAuthModal={() => setShowAuthModal(true)}
+            />
+          )}
+
+          {activeView === 'daf-settings' && <SettingsModule />}
+
+          {activeView === 'daf-about' && <AboutModule />}
+        </main>
+      </DigiSoliaShell>
 
       {/* Auth & Role Switcher Modal */}
       {showAuthModal && (
@@ -206,8 +286,10 @@ function MainLayout() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <MainLayout />
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <MainLayout />
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }

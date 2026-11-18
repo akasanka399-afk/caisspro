@@ -1,7 +1,13 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.theme-neon, .theme-neon *, .dark, .dark *));
 
 @layer base {
   :root, .theme-light, [data-theme="light"] {
+    --digisolia-primary: #163B65;
+    --digisolia-secondary: #2783C7;
+    --digisolia-white: #FFFFFF;
+    --digisolia-bg: #F4F7FB;
+    --digisolia-border: #E1E7EF;
     --bg-canvas: #f8fafc;
     --bg-surface: #ffffff;
     --bg-surface-muted: #f1f5f9;
