@@ -18,6 +18,7 @@ import {
   deleteDocFromFirestore,
   setupFirestoreListeners,
   seedRemoteFirestoreIfEmpty,
+  lookupBusinessAndStaffByAccessCode,
 } from './firebaseSync';
 
 import imgHeroCounter from '../assets/images/pos_retail_counter_1793177600014.jpg';
@@ -188,6 +189,106 @@ const SEED_USERS: User[] = [
     status: 'active',
     createdAt: '2026-02-01',
     lastLogin: '2026-10-27 19:30',
+  },
+  // Pharmacie Centrale (CP-5120)
+  {
+    id: 'usr_owner_pharmacie',
+    name: 'Dr. Cissé Aminata (Propriétaire)',
+    email: 'aminata@pharmaciecentrale.com',
+    phone: '+225 05 12 34 56 78',
+    role: 'owner',
+    businessId: 'biz_pharmacie',
+    pinCode: '1234',
+    status: 'active',
+    createdAt: '2026-02-01',
+    lastLogin: '2026-10-28 08:15',
+  },
+  {
+    id: 'usr_cashier_pharmacie',
+    name: 'Kadiatou Koné (Caissière)',
+    email: 'caisse@pharmaciecentrale.com',
+    phone: '+225 05 12 34 56 79',
+    role: 'cashier',
+    businessId: 'biz_pharmacie',
+    pinCode: '0000',
+    status: 'active',
+    createdAt: '2026-02-01',
+    lastLogin: '2026-10-28 08:00',
+  },
+  // Boutique Mode Prestige Dakar (CP-7419)
+  {
+    id: 'usr_owner_dakar',
+    name: 'Cheikh Ndiaye (Propriétaire)',
+    email: 'cheikh@modedakar.sn',
+    phone: '+221 77 654 32 10',
+    role: 'owner',
+    businessId: 'biz_dakar',
+    pinCode: '1234',
+    status: 'active',
+    createdAt: '2026-03-01',
+    lastLogin: '2026-10-28 09:00',
+  },
+  {
+    id: 'usr_cashier_dakar',
+    name: 'Awa Diouf (Caissière)',
+    email: 'caisse@modedakar.sn',
+    phone: '+221 77 654 32 11',
+    role: 'cashier',
+    businessId: 'biz_dakar',
+    pinCode: '0000',
+    status: 'active',
+    createdAt: '2026-03-01',
+    lastLogin: '2026-10-28 09:00',
+  },
+  // Quincaillerie Pro (CP-3391)
+  {
+    id: 'usr_owner_quinc',
+    name: 'Kouassi Konan (Propriétaire)',
+    email: 'kouassi@quincailleriepro.ci',
+    phone: '+225 01 23 45 67 89',
+    role: 'owner',
+    businessId: 'biz_quincaillerie',
+    pinCode: '1234',
+    status: 'active',
+    createdAt: '2026-02-14',
+    lastLogin: '2026-10-28 08:30',
+  },
+  {
+    id: 'usr_cashier_quinc',
+    name: 'Yao Serge (Caissier)',
+    email: 'caisse@quincailleriepro.ci',
+    phone: '+225 01 23 45 67 90',
+    role: 'cashier',
+    businessId: 'biz_quincaillerie',
+    pinCode: '0000',
+    status: 'active',
+    createdAt: '2026-02-14',
+    lastLogin: '2026-10-28 08:30',
+  },
+  // Boutique Télécom (CP-6610)
+  {
+    id: 'usr_owner_telecom',
+    name: 'Moussa Bakayoko (Propriétaire)',
+    email: 'moussa@boutiquetelecom.ci',
+    phone: '+225 07 88 99 00 11',
+    role: 'owner',
+    businessId: 'biz_telecom',
+    pinCode: '1234',
+    status: 'active',
+    createdAt: '2026-01-15',
+    lastLogin: '2026-10-28 09:10',
+  },
+  {
+    id: 'usr_cashier_telecom',
+    name: 'Mariam Bamba (Caissière)',
+    email: 'caisse@boutiquetelecom.ci',
+    phone: '+225 07 88 99 00 12',
+    role: 'cashier',
+    businessId: 'biz_telecom',
+    pinCode: '0000',
+    status: 'active',
+    createdAt: '2026-01-15',
+    lastLogin: '2026-10-28 09:10',
   },
 ];
 
@@ -1012,6 +1113,21 @@ class StoreService {
     }
     if (!localStorage.getItem(STORAGE_KEYS.USERS)) {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
+    } else {
+      // Ensure seeded businesses always have their default Owner & Cashier users available locally
+      try {
+        const existingUsers: User[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
+        const existingIds = new Set(existingUsers.map((u) => u.id));
+        const missingSeedUsers = SEED_USERS.filter((su) => !existingIds.has(su.id));
+        if (missingSeedUsers.length > 0) {
+          localStorage.setItem(
+            STORAGE_KEYS.USERS,
+            JSON.stringify([...existingUsers, ...missingSeedUsers])
+          );
+        }
+      } catch {
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
+      }
     }
     if (!localStorage.getItem(STORAGE_KEYS.PRODUCTS)) {
       localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(SEED_PRODUCTS));
@@ -1037,6 +1153,17 @@ class StoreService {
     }
   }
 
+  private mergeRemoteItemsById<T extends { id: string }>(localItems: T[], remoteItems: T[]): T[] {
+    const map = new Map<string, T>();
+    localItems.forEach((item) => {
+      if (item && item.id) map.set(item.id, item);
+    });
+    remoteItems.forEach((item) => {
+      if (item && item.id) map.set(item.id, item);
+    });
+    return Array.from(map.values());
+  }
+
   private initFirebase() {
     if (typeof window === 'undefined') return;
     try {
@@ -1054,25 +1181,29 @@ class StoreService {
       setupFirestoreListeners({
         onBusinessesUpdated: (items) => {
           if (items && items.length > 0) {
-            localStorage.setItem(STORAGE_KEYS.BUSINESSES, JSON.stringify(items));
+            const merged = this.mergeRemoteItemsById(this.getBusinesses(), items);
+            localStorage.setItem(STORAGE_KEYS.BUSINESSES, JSON.stringify(merged));
             this.notify();
           }
         },
         onProductsUpdated: (items) => {
           if (items && items.length > 0) {
-            localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(items));
+            const merged = this.mergeRemoteItemsById(this.getProducts(), items);
+            localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(merged));
             this.notify();
           }
         },
         onTransactionsUpdated: (items) => {
           if (items && items.length > 0) {
-            localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(items));
+            const merged = this.mergeRemoteItemsById(this.getTransactions(), items);
+            localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(merged));
             this.notify();
           }
         },
         onUsersUpdated: (items) => {
           if (items && items.length > 0) {
-            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(items));
+            const merged = this.mergeRemoteItemsById(this.getUsers(), items);
+            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
             this.notify();
           }
         },
@@ -1278,6 +1409,41 @@ class StoreService {
 
   public getUsersByBusinessId(businessId: string): User[] {
     return this.getUsers().filter((u) => u.businessId === businessId && u.status === 'active');
+  }
+
+  /**
+   * Look up a business by its accessCode from Cloud Firestore and cache both the business
+   * and its active staff locally so phone/tablet terminals immediately display Propriétaire/Caissier choices.
+   */
+  public async fetchBusinessAndStaffByAccessCode(rawCode: string): Promise<{
+    business?: Business;
+    staff: User[];
+  }> {
+    const localBiz = this.getBusinessByAccessCode(rawCode);
+    const localStaff = localBiz ? this.getUsersByBusinessId(localBiz.id) : [];
+
+    const remote = await lookupBusinessAndStaffByAccessCode(rawCode);
+    if (remote.business) {
+      const mergedBusinesses = this.mergeRemoteItemsById(this.getBusinesses(), [remote.business]);
+      localStorage.setItem(STORAGE_KEYS.BUSINESSES, JSON.stringify(mergedBusinesses));
+
+      if (remote.staff.length > 0) {
+        const mergedUsers = this.mergeRemoteItemsById(this.getUsers(), remote.staff);
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(mergedUsers));
+      }
+
+      this.notify();
+      const updatedStaff = this.getUsersByBusinessId(remote.business.id);
+      return {
+        business: remote.business,
+        staff: updatedStaff.length > 0 ? updatedStaff : remote.staff,
+      };
+    }
+
+    return {
+      business: localBiz,
+      staff: localStaff,
+    };
   }
 
   public loginWithBusinessCodeAndPassword({

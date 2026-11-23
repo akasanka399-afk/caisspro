@@ -5,10 +5,14 @@ import {
   deleteDoc,
   onSnapshot,
   getDocs,
+  query,
+  where,
   writeBatch,
   DocumentData,
+  Query,
 } from 'firebase/firestore';
-import { db, isFirestoreConnected } from '../firebase/config';
+import { db } from '../firebase/config';
+import { Business, User } from '../types';
 
 export interface CloudSyncState {
   isOnline: boolean;
@@ -91,6 +95,60 @@ export async function deleteDocFromFirestore(collectionName: string, docId: stri
 }
 
 /**
+ * Direct Cloud lookup for a Business by its connection accessCode and its active staff (Owner/Manager/Cashier).
+ * Uses strictly filtered queries so phones without Google sign-in can connect seamlessly.
+ */
+export async function lookupBusinessAndStaffByAccessCode(rawCode: string): Promise<{
+  business?: Business;
+  staff: User[];
+}> {
+  const clean = rawCode.trim().toUpperCase();
+  if (!clean) return { staff: [] };
+
+  const candidates = Array.from(
+    new Set([clean, clean.startsWith('CP-') ? clean : `CP-${clean}`])
+  );
+
+  try {
+    const bizQuery = query(
+      collection(db, 'businesses'),
+      where('accessCode', 'in', candidates)
+    );
+    const bizSnap = await getDocs(bizQuery);
+    if (bizSnap.empty) {
+      return { staff: [] };
+    }
+
+    const business = bizSnap.docs[0].data() as Business;
+
+    const staffQuery = query(
+      collection(db, 'users'),
+      where('businessId', '==', business.id),
+      where('role', 'in', ['owner', 'manager', 'cashier'])
+    );
+    const staffSnap = await getDocs(staffQuery);
+    const staff: User[] = [];
+    staffSnap.forEach((d) => {
+      const u = d.data() as User;
+      if (u.status === 'active') {
+        staff.push(u);
+      }
+    });
+
+    updateSyncState({
+      isFirebaseActive: true,
+      lastSyncTimestamp: Date.now(),
+      error: null,
+    });
+
+    return { business, staff };
+  } catch (err: any) {
+    console.warn('[FirebaseSync] lookupBusinessAndStaffByAccessCode notice:', err?.message || err);
+    return { staff: [] };
+  }
+}
+
+/**
  * Initialize real-time listeners on Firestore collections to receive updates across instances
  */
 export function setupFirestoreListeners(callbacks: {
@@ -105,23 +163,54 @@ export function setupFirestoreListeners(callbacks: {
 }): () => void {
   const unsubscribers: (() => void)[] = [];
 
-  const collectionsConfig = [
-    { name: 'businesses', cb: callbacks.onBusinessesUpdated },
-    { name: 'products', cb: callbacks.onProductsUpdated },
-    { name: 'transactions', cb: callbacks.onTransactionsUpdated },
-    { name: 'users', cb: callbacks.onUsersUpdated },
-    { name: 'customers', cb: callbacks.onCustomersUpdated },
-    { name: 'sessions', cb: callbacks.onSessionsUpdated },
-    { name: 'notifications', cb: callbacks.onNotificationsUpdated },
-    { name: 'movements', cb: callbacks.onMovementsUpdated },
+  const collectionsConfig: { name: string; q: Query<DocumentData>; cb?: (items: any[]) => void }[] = [
+    {
+      name: 'businesses',
+      q: query(collection(db, 'businesses'), where('subscriptionStatus', 'in', ['active', 'trial', 'suspended'])),
+      cb: callbacks.onBusinessesUpdated,
+    },
+    {
+      name: 'products',
+      q: query(collection(db, 'products'), where('businessId', '>', '')),
+      cb: callbacks.onProductsUpdated,
+    },
+    {
+      name: 'transactions',
+      q: query(collection(db, 'transactions'), where('businessId', '>', '')),
+      cb: callbacks.onTransactionsUpdated,
+    },
+    {
+      name: 'users',
+      q: query(collection(db, 'users'), where('role', 'in', ['owner', 'manager', 'cashier', 'developer'])),
+      cb: callbacks.onUsersUpdated,
+    },
+    {
+      name: 'customers',
+      q: query(collection(db, 'customers'), where('businessId', '>', '')),
+      cb: callbacks.onCustomersUpdated,
+    },
+    {
+      name: 'sessions',
+      q: query(collection(db, 'sessions'), where('businessId', '>', '')),
+      cb: callbacks.onSessionsUpdated,
+    },
+    {
+      name: 'notifications',
+      q: query(collection(db, 'notifications'), where('targetRole', 'in', ['all', 'owner', 'manager', 'cashier', 'developer'])),
+      cb: callbacks.onNotificationsUpdated,
+    },
+    {
+      name: 'movements',
+      q: query(collection(db, 'movements'), where('businessId', '>', '')),
+      cb: callbacks.onMovementsUpdated,
+    },
   ];
 
-  collectionsConfig.forEach(({ name, cb }) => {
+  collectionsConfig.forEach(({ name, q, cb }) => {
     if (!cb) return;
     try {
-      const colRef = collection(db, name);
       const unsub = onSnapshot(
-        colRef,
+        q,
         (snapshot) => {
           if (!snapshot.empty) {
             const docs: DocumentData[] = [];
@@ -176,8 +265,11 @@ export async function seedRemoteFirestoreIfEmpty(dataMap: {
   movements: any[];
 }) {
   try {
-    const bizCol = collection(db, 'businesses');
-    const bizSnap = await getDocs(bizCol);
+    const bizQuery = query(
+      collection(db, 'businesses'),
+      where('subscriptionStatus', 'in', ['active', 'trial', 'suspended'])
+    );
+    const bizSnap = await getDocs(bizQuery);
     if (!bizSnap.empty) {
       updateSyncState({ isFirebaseActive: true });
       return; // Already populated

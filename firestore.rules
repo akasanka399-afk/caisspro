@@ -257,7 +257,9 @@ service cloud.firestore {
     // Businesses
     match /businesses/{businessId} {
       allow get: if isValidId(businessId);
-      allow list: if isSignedIn() || resource.data.id is string;
+      allow list: if isSignedIn()
+        || resource.data.accessCode is string
+        || resource.data.subscriptionStatus in ['active', 'trial', 'suspended'];
       allow create, update: if isValidId(businessId)
         && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120
         && request.resource.data.tradeType is string
@@ -272,7 +274,9 @@ service cloud.firestore {
         || (isVerifiedUser() && request.auth.uid == userId)
         || isDigiSoliaAdmin()
       );
-      allow list: if isDigiSoliaAdmin() || resource.data.id.matches('^usr_.*');
+      allow list: if isDigiSoliaAdmin()
+        || resource.data.role in ['owner', 'manager', 'cashier', 'developer']
+        || (isVerifiedUser() && resource.data.id == request.auth.uid);
       allow create: if isValidId(userId)
         && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120
         && request.resource.data.role in ['developer', 'owner', 'manager', 'cashier', 'user']
