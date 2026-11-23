@@ -45,9 +45,19 @@ function updateSyncState(partial: Partial<CloudSyncState>) {
   listeners.forEach((fn) => fn({ ...syncState }));
 }
 
+export function setCloudConnectionStatus(isOnline: boolean, isFirebaseActive: boolean) {
+  updateSyncState({
+    isOnline,
+    isFirebaseActive,
+    ...(isFirebaseActive ? { lastSyncTimestamp: Date.now(), error: null } : {}),
+  });
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => updateSyncState({ isOnline: true }));
-  window.addEventListener('offline', () => updateSyncState({ isOnline: false }));
+  window.addEventListener('offline', () =>
+    updateSyncState({ isOnline: false, isFirebaseActive: false })
+  );
 }
 
 /**

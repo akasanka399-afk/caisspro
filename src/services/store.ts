@@ -19,7 +19,9 @@ import {
   setupFirestoreListeners,
   seedRemoteFirestoreIfEmpty,
   lookupBusinessAndStaffByAccessCode,
+  setCloudConnectionStatus,
 } from './firebaseSync';
+import { testConnection } from '../firebase/config';
 
 import imgHeroCounter from '../assets/images/pos_retail_counter_1793177600014.jpg';
 import imgBeverage from '../assets/images/product_beverage_pack_1793177600621.jpg';
@@ -1088,6 +1090,9 @@ export const playSoundEffect = (type: 'beep' | 'cash' | 'error' | 'alert') => {
 class StoreService {
   private syncChannel: BroadcastChannel | null = null;
   private listeners: Set<() => void> = new Set();
+  private firebaseUnsubscribe: (() => void) | null = null;
+  private firebaseInitialized = false;
+  private onlineReconnectBound = false;
 
   constructor() {
     this.initStorage();
@@ -1164,10 +1169,30 @@ class StoreService {
     return Array.from(map.values());
   }
 
-  private initFirebase() {
+  private async initFirebase() {
     if (typeof window === 'undefined') return;
+    if (this.firebaseInitialized) return;
+
     try {
-      seedRemoteFirestoreIfEmpty({
+      const connected = await testConnection();
+      if (!connected) {
+        setCloudConnectionStatus(
+          typeof navigator !== 'undefined' ? navigator.onLine : false,
+          false
+        );
+        if (!this.onlineReconnectBound) {
+          this.onlineReconnectBound = true;
+          window.addEventListener('online', () => {
+            this.initFirebase();
+          });
+        }
+        return;
+      }
+
+      this.firebaseInitialized = true;
+      setCloudConnectionStatus(true, true);
+
+      await seedRemoteFirestoreIfEmpty({
         businesses: this.getBusinesses(),
         users: this.getUsers(),
         products: this.getProducts(),
@@ -1178,7 +1203,11 @@ class StoreService {
         movements: this.getStockMovements(),
       });
 
-      setupFirestoreListeners({
+      if (this.firebaseUnsubscribe) {
+        this.firebaseUnsubscribe();
+      }
+
+      this.firebaseUnsubscribe = setupFirestoreListeners({
         onBusinessesUpdated: (items) => {
           if (items && items.length > 0) {
             const merged = this.mergeRemoteItemsById(this.getBusinesses(), items);
