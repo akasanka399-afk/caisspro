@@ -19,7 +19,7 @@ import {
 } from '../services/offlineQueue';
 import { DigiSoliaUserPreferences } from '../types/digisolia.types';
 import { SyncStatusBanner } from '../components/SyncStatusBanner';
-import { verifyFirestoreConnection } from '../services/digisoliaFirebase';
+import { store } from '../../services/store';
 
 export const SettingsModule: React.FC = () => {
   const { theme, setTheme } = useTheme();
@@ -42,17 +42,23 @@ export const SettingsModule: React.FC = () => {
   const handleTestFirestore = async () => {
     setTestingConn(true);
     setNotice(null);
-    const ok = await verifyFirestoreConnection();
+    const res = await store.syncNow();
     setTestingConn(false);
-    if (ok) {
+    if (res.ok && !res.error) {
+      const syncedTotal = res.syncedPosOps + res.dafSynced;
       setNotice({
         type: 'success',
-        text: 'Connexion au serveur Firebase Cloud Firestore vérifiée avec succès.',
+        text:
+          syncedTotal > 0
+            ? `Connexion Firebase vérifiée et ${syncedTotal} donnée(s) synchronisée(s) avec succès.`
+            : 'Connexion au serveur Firebase Cloud Firestore vérifiée et données synchronisées.',
       });
     } else {
       setNotice({
         type: 'error',
-        text: 'Serveur Firebase momentanément inaccessible. L’application continue en mode hors connexion.',
+        text:
+          res.error ||
+          'Serveur Firebase momentanément inaccessible. L’application continue en mode hors connexion.',
       });
     }
   };
@@ -303,7 +309,7 @@ export const SettingsModule: React.FC = () => {
               ) : (
                 <Wifi className="w-3.5 h-3.5" />
               )}
-              <span>{testingConn ? 'Test en cours...' : 'Tester connexion Firebase'}</span>
+              <span>{testingConn ? 'Synchronisation...' : 'Tester & Synchroniser'}</span>
             </button>
           </div>
           <SyncStatusBanner />

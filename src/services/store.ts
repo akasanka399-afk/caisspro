@@ -16,12 +16,21 @@ import {
 import {
   syncDocToFirestore,
   deleteDocFromFirestore,
+  deleteBusinessCascadeFromFirestore,
   setupFirestoreListeners,
-  seedRemoteFirestoreIfEmpty,
+  seedOrReconcileFirestore,
   lookupBusinessAndStaffByAccessCode,
   setCloudConnectionStatus,
+  flushPendingPosSyncQueue,
+  getPendingDocIds,
+  getPendingDeletedIds,
+  getLocallyDeletedDocIds,
+  purgePendingSyncForBusiness,
+  clearPosSyncTrackingStorage,
+  CollectionSyncPayload,
 } from './firebaseSync';
 import { testConnection } from '../firebase/config';
+import { flushOfflineQueue } from '../digisolia/services/offlineQueue';
 
 import imgHeroCounter from '../assets/images/pos_retail_counter_1793177600014.jpg';
 import imgBeverage from '../assets/images/product_beverage_pack_1793177600621.jpg';
@@ -36,6 +45,7 @@ export const ASSET_IMAGES = {
 const STORAGE_KEYS = {
   USERS: 'kassapro_users',
   BUSINESSES: 'kassapro_businesses',
+  DELETED_BUSINESSES: 'kassapro_deleted_businesses',
   PRODUCTS: 'kassapro_products',
   CUSTOMERS: 'kassapro_customers',
   TRANSACTIONS: 'kassapro_transactions',
@@ -45,6 +55,15 @@ const STORAGE_KEYS = {
   CURRENT_USER_ID: 'kassapro_current_user_id',
   CREDIT_SETTLEMENTS: 'kassapro_credit_settlements',
 };
+
+const DEVELOPER_DISPLAY_NAME = 'Eric SANKARA (Développeur)';
+const SEED_BUSINESS_IDS = ['biz_cocody', 'biz_pharmacie', 'biz_dakar', 'biz_quincaillerie', 'biz_telecom'];
+
+let idSequence = 0;
+function makeId(prefix: string): string {
+  idSequence += 1;
+  return `${prefix}_${Date.now()}_${idSequence}_${Math.random().toString(36).slice(2, 6)}`;
+}
 
 // Default seed businesses
 const SEED_BUSINESSES: Business[] = [
@@ -134,7 +153,7 @@ const SEED_BUSINESSES: Business[] = [
 const SEED_USERS: User[] = [
   {
     id: 'usr_dev',
-    name: 'Alexandre K. (Développeur)',
+    name: DEVELOPER_DISPLAY_NAME,
     email: 'dev@kassapro.io',
     phone: '+225 07 00 11 22 33',
     role: 'developer',
@@ -1086,12 +1105,13 @@ export const playSoundEffect = (type: 'beep' | 'cash' | 'error' | 'alert') => {
   }
 };
 
-// Store service with live BroadcastChannel & LocalStorage sync
+// Store service with live BroadcastChannel & LocalStorage + Cloud Firestore sync
 class StoreService {
   private syncChannel: BroadcastChannel | null = null;
   private listeners: Set<() => void> = new Set();
   private firebaseUnsubscribe: (() => void) | null = null;
   private firebaseInitialized = false;
+  private firebaseInitializing = false;
   private onlineReconnectBound = false;
 
   constructor() {
@@ -1108,7 +1128,18 @@ class StoreService {
         // Fallback
       }
     }
+    this.bindOnlineReconnect();
     this.initFirebase();
+  }
+
+  private bindOnlineReconnect() {
+    if (typeof window === 'undefined' || this.onlineReconnectBound) return;
+    this.onlineReconnectBound = true;
+    window.addEventListener('online', () => {
+      this.syncNow().catch(() => {
+        // Resilient offline fallback
+      });
+    });
   }
 
   private initStorage() {
@@ -1119,16 +1150,19 @@ class StoreService {
     if (!localStorage.getItem(STORAGE_KEYS.USERS)) {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
     } else {
-      // Ensure seeded businesses always have their default Owner & Cashier users available locally
       try {
         const existingUsers: User[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
+        const deletedBizIds = new Set(this.getDeletedBusinessIds());
         const existingIds = new Set(existingUsers.map((u) => u.id));
-        const missingSeedUsers = SEED_USERS.filter((su) => !existingIds.has(su.id));
-        if (missingSeedUsers.length > 0) {
-          localStorage.setItem(
-            STORAGE_KEYS.USERS,
-            JSON.stringify([...existingUsers, ...missingSeedUsers])
-          );
+        const missingSeedUsers = SEED_USERS.filter(
+          (su) => !existingIds.has(su.id) && !deletedBizIds.has(su.businessId)
+        );
+        const { list: normalizedUsers, changed } = this.normalizeUsersList([
+          ...existingUsers,
+          ...missingSeedUsers,
+        ]);
+        if (missingSeedUsers.length > 0 || changed) {
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(normalizedUsers));
         }
       } catch {
         localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
@@ -1143,6 +1177,9 @@ class StoreService {
     if (!localStorage.getItem(STORAGE_KEYS.TRANSACTIONS)) {
       localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(SEED_TRANSACTIONS));
     }
+    if (!localStorage.getItem(STORAGE_KEYS.CREDIT_SETTLEMENTS)) {
+      localStorage.setItem(STORAGE_KEYS.CREDIT_SETTLEMENTS, JSON.stringify([]));
+    }
     if (!localStorage.getItem(STORAGE_KEYS.SESSIONS)) {
       localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(SEED_SESSIONS));
     }
@@ -1153,8 +1190,41 @@ class StoreService {
       localStorage.setItem(STORAGE_KEYS.MOVEMENTS, JSON.stringify(SEED_MOVEMENTS));
     }
     if (!localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID)) {
-      // Default to Cashier for POS immediate demo, can easily switch to Owner or Developer
       localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, 'usr_cashier1');
+    }
+  }
+
+  private normalizeUsersList(users: User[]): { list: User[]; changed: boolean; migratedDev?: User } {
+    let changed = false;
+    let migratedDev: User | undefined;
+    const list = users.map((u) => {
+      if (u.id === 'usr_dev' && u.name !== DEVELOPER_DISPLAY_NAME) {
+        changed = true;
+        migratedDev = { ...u, name: DEVELOPER_DISPLAY_NAME };
+        return migratedDev;
+      }
+      return u;
+    });
+    return { list, changed, migratedDev };
+  }
+
+  private getDeletedBusinessIds(): string[] {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.DELETED_BUSINESSES);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private markBusinessDeletedLocally(businessId: string) {
+    if (typeof window === 'undefined') return;
+    const existing = this.getDeletedBusinessIds();
+    if (!existing.includes(businessId)) {
+      const next = [...existing, businessId].slice(-200);
+      localStorage.setItem(STORAGE_KEYS.DELETED_BUSINESSES, JSON.stringify(next));
     }
   }
 
@@ -1169,9 +1239,199 @@ class StoreService {
     return Array.from(map.values());
   }
 
+  /**
+   * Non-destructive collection reconciliation:
+   * - Preserves local mutations currently pending in the POS outbox queue
+   * - Respects local deletion tombstones & removed business IDs
+   * - Propagates live remote deletions from Firestore docChanges()
+   */
+  private reconcileCollection<T extends { id: string; businessId?: string }>(
+    collectionName: string,
+    localItems: T[],
+    payload: CollectionSyncPayload<T>,
+    options?: { allowDevWithoutBusiness?: boolean; allowNoBusinessId?: boolean }
+  ): T[] {
+    const deletedBizIds = new Set(this.getDeletedBusinessIds());
+    const locallyDeletedIds = getLocallyDeletedDocIds(collectionName);
+    const pendingUpsertIds = getPendingDocIds(collectionName);
+    const pendingDeleteIds = getPendingDeletedIds(collectionName);
+    const removedSet = new Set(payload.removedIds || []);
+
+    const map = new Map<string, T>();
+
+    localItems.forEach((item) => {
+      if (!item?.id) return;
+      if (removedSet.has(item.id) && !pendingUpsertIds.has(item.id)) return;
+      if (pendingDeleteIds.has(item.id) || locallyDeletedIds.has(item.id)) return;
+      if (
+        item.businessId &&
+        deletedBizIds.has(item.businessId) &&
+        !(options?.allowDevWithoutBusiness && item.id === 'usr_dev')
+      ) {
+        return;
+      }
+      map.set(item.id, item);
+    });
+
+    payload.docs.forEach((remoteItem) => {
+      if (!remoteItem?.id) return;
+      if (pendingDeleteIds.has(remoteItem.id) || locallyDeletedIds.has(remoteItem.id)) return;
+      if (
+        remoteItem.businessId &&
+        deletedBizIds.has(remoteItem.businessId) &&
+        !(options?.allowDevWithoutBusiness && remoteItem.id === 'usr_dev')
+      ) {
+        return;
+      }
+      if (!options?.allowNoBusinessId && collectionName === 'businesses' && deletedBizIds.has(remoteItem.id)) {
+        return;
+      }
+      // Do not overwrite unsent local mutations waiting in the outbox
+      if (pendingUpsertIds.has(remoteItem.id) && map.has(remoteItem.id)) {
+        return;
+      }
+      map.set(remoteItem.id, remoteItem);
+    });
+
+    return Array.from(map.values());
+  }
+
+  private async runSeedOrReconcile() {
+    return seedOrReconcileFirestore({
+      businesses: this.getBusinesses(),
+      users: this.getUsers(),
+      products: this.getProducts(),
+      customers: this.getCustomers(),
+      transactions: this.getTransactions(),
+      creditSettlements: this.getCreditSettlements(),
+      sessions: this.getSessions(),
+      notifications: this.getAllNotificationsRaw(),
+      movements: this.getStockMovements(),
+      deletedBusinessIds: this.getDeletedBusinessIds(),
+      seedBusinessIds: SEED_BUSINESS_IDS,
+    });
+  }
+
+  private attachListeners() {
+    if (this.firebaseUnsubscribe) {
+      this.firebaseUnsubscribe();
+      this.firebaseUnsubscribe = null;
+    }
+
+    this.firebaseUnsubscribe = setupFirestoreListeners({
+      onBusinessesUpdated: (payload) => {
+        const deletedIds = new Set(this.getDeletedBusinessIds());
+        const remoteIds = new Set(payload.docs.map((b) => b.id));
+        const pendingBizUpserts = getPendingDocIds('businesses');
+
+        let reconciled = this.reconcileCollection<Business>(
+          'businesses',
+          this.getBusinesses(),
+          payload,
+          { allowNoBusinessId: true }
+        ).filter((b) => !deletedIds.has(b.id));
+
+        // If authoritative live server snapshot omits a seeded business, remove it locally
+        if (!payload.fromCache && payload.docs.length > 0) {
+          const seedSet = new Set(SEED_BUSINESS_IDS);
+          const staleSeedIds = reconciled
+            .filter((b) => seedSet.has(b.id) && !remoteIds.has(b.id) && !pendingBizUpserts.has(b.id))
+            .map((b) => b.id);
+          if (staleSeedIds.length > 0) {
+            staleSeedIds.forEach((id) => this.removeBusinessLocally(id));
+            reconciled = reconciled.filter((b) => !staleSeedIds.includes(b.id));
+          }
+        }
+
+        localStorage.setItem(STORAGE_KEYS.BUSINESSES, JSON.stringify(reconciled));
+        this.notify();
+      },
+      onBusinessRemoved: (removedBizId) => {
+        this.removeBusinessLocally(removedBizId);
+      },
+      onProductsUpdated: (payload) => {
+        const merged = this.reconcileCollection<Product>('products', this.getProducts(), payload);
+        localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(merged));
+        this.notify();
+      },
+      onTransactionsUpdated: (payload) => {
+        const merged = this.reconcileCollection<SaleTransaction>(
+          'transactions',
+          this.getTransactions(),
+          payload
+        );
+        merged.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(merged));
+        this.notify();
+      },
+      onCreditSettlementsUpdated: (payload) => {
+        const merged = this.reconcileCollection<CreditSettlement>(
+          'credit_settlements',
+          this.getCreditSettlements(),
+          payload
+        );
+        merged.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        localStorage.setItem(STORAGE_KEYS.CREDIT_SETTLEMENTS, JSON.stringify(merged));
+        this.notify();
+      },
+      onUsersUpdated: (payload) => {
+        const merged = this.reconcileCollection<User>('users', this.getUsers(), payload, {
+          allowDevWithoutBusiness: true,
+        });
+        const { list: normalized, changed, migratedDev } = this.normalizeUsersList(merged);
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(normalized));
+        if (changed && migratedDev) {
+          syncDocToFirestore('users', migratedDev.id, migratedDev);
+        }
+        this.notify();
+      },
+      onCustomersUpdated: (payload) => {
+        const merged = this.reconcileCollection<Customer>(
+          'customers',
+          this.getCustomers(),
+          payload
+        );
+        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(merged));
+        this.notify();
+      },
+      onSessionsUpdated: (payload) => {
+        const merged = this.reconcileCollection<CashRegisterSession>(
+          'sessions',
+          this.getSessions(),
+          payload
+        );
+        merged.sort((a, b) => (b.openedAt || '').localeCompare(a.openedAt || ''));
+        localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(merged));
+        this.notify();
+      },
+      onNotificationsUpdated: (payload) => {
+        const merged = this.reconcileCollection<PushNotification>(
+          'notifications',
+          this.getAllNotificationsRaw(),
+          payload,
+          { allowNoBusinessId: true }
+        );
+        merged.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(merged));
+        this.notify();
+      },
+      onMovementsUpdated: (payload) => {
+        const merged = this.reconcileCollection<StockMovement>(
+          'movements',
+          this.getStockMovements(),
+          payload
+        );
+        merged.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        localStorage.setItem(STORAGE_KEYS.MOVEMENTS, JSON.stringify(merged));
+        this.notify();
+      },
+    });
+  }
+
   private async initFirebase() {
     if (typeof window === 'undefined') return;
-    if (this.firebaseInitialized) return;
+    if (this.firebaseInitialized || this.firebaseInitializing) return;
+    this.firebaseInitializing = true;
 
     try {
       const connected = await testConnection();
@@ -1180,90 +1440,76 @@ class StoreService {
           typeof navigator !== 'undefined' ? navigator.onLine : false,
           false
         );
-        if (!this.onlineReconnectBound) {
-          this.onlineReconnectBound = true;
-          window.addEventListener('online', () => {
-            this.initFirebase();
-          });
-        }
         return;
       }
 
       this.firebaseInitialized = true;
       setCloudConnectionStatus(true, true);
 
-      await seedRemoteFirestoreIfEmpty({
-        businesses: this.getBusinesses(),
-        users: this.getUsers(),
-        products: this.getProducts(),
-        customers: this.getCustomers(),
-        transactions: this.getTransactions(),
-        sessions: this.getSessions(),
-        notifications: this.getNotifications(),
-        movements: this.getStockMovements(),
-      });
-
-      if (this.firebaseUnsubscribe) {
-        this.firebaseUnsubscribe();
-      }
-
-      this.firebaseUnsubscribe = setupFirestoreListeners({
-        onBusinessesUpdated: (items) => {
-          if (items && items.length > 0) {
-            const merged = this.mergeRemoteItemsById(this.getBusinesses(), items);
-            localStorage.setItem(STORAGE_KEYS.BUSINESSES, JSON.stringify(merged));
-            this.notify();
-          }
-        },
-        onProductsUpdated: (items) => {
-          if (items && items.length > 0) {
-            const merged = this.mergeRemoteItemsById(this.getProducts(), items);
-            localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(merged));
-            this.notify();
-          }
-        },
-        onTransactionsUpdated: (items) => {
-          if (items && items.length > 0) {
-            const merged = this.mergeRemoteItemsById(this.getTransactions(), items);
-            localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(merged));
-            this.notify();
-          }
-        },
-        onUsersUpdated: (items) => {
-          if (items && items.length > 0) {
-            const merged = this.mergeRemoteItemsById(this.getUsers(), items);
-            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
-            this.notify();
-          }
-        },
-        onCustomersUpdated: (items) => {
-          if (items && items.length > 0) {
-            localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(items));
-            this.notify();
-          }
-        },
-        onSessionsUpdated: (items) => {
-          if (items && items.length > 0) {
-            localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(items));
-            this.notify();
-          }
-        },
-        onNotificationsUpdated: (items) => {
-          if (items && items.length > 0) {
-            localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(items));
-            this.notify();
-          }
-        },
-        onMovementsUpdated: (items) => {
-          if (items && items.length > 0) {
-            localStorage.setItem(STORAGE_KEYS.MOVEMENTS, JSON.stringify(items));
-            this.notify();
-          }
-        },
-      });
+      // First push any pending offline mutations queued earlier, then seed or reconcile deltas
+      await flushPendingPosSyncQueue();
+      await this.runSeedOrReconcile();
+      this.attachListeners();
     } catch (e) {
       console.warn('[Firebase] Init error (offline fallback mode active):', e);
+    } finally {
+      this.firebaseInitializing = false;
     }
+  }
+
+  /**
+   * Unified manual & automatic bidirectional synchronization across POS + DAF queues.
+   */
+  public async syncNow(): Promise<{
+    ok: boolean;
+    syncedPosOps: number;
+    pendingPosOps: number;
+    dafSynced: number;
+    error?: string;
+  }> {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setCloudConnectionStatus(false, false);
+      return {
+        ok: false,
+        syncedPosOps: 0,
+        pendingPosOps: 0,
+        dafSynced: 0,
+        error: 'Appareil hors connexion. Les modifications sont conservées localement.',
+      };
+    }
+
+    const connected = await testConnection();
+    setCloudConnectionStatus(true, connected);
+    if (!connected) {
+      return {
+        ok: false,
+        syncedPosOps: 0,
+        pendingPosOps: 0,
+        dafSynced: 0,
+        error: 'Serveur Firebase temporairement inaccessible.',
+      };
+    }
+
+    const flushRes = await flushPendingPosSyncQueue();
+
+    if (!this.firebaseInitialized) {
+      this.firebaseInitialized = true;
+      await this.runSeedOrReconcile();
+      this.attachListeners();
+    } else {
+      await this.runSeedOrReconcile();
+    }
+
+    const dafRes = await flushOfflineQueue();
+    this.broadcast();
+
+    return {
+      ok: flushRes.failedCount === 0,
+      syncedPosOps: flushRes.syncedCount,
+      pendingPosOps: flushRes.remainingCount,
+      dafSynced: dafRes.syncedCount,
+      error: flushRes.lastError || dafRes.lastError,
+    };
   }
 
   public subscribe(listener: () => void): () => void {
@@ -1299,14 +1545,20 @@ class StoreService {
   // --- Users ---
   public getUsers(): User[] {
     const data = localStorage.getItem(STORAGE_KEYS.USERS);
-    return data ? JSON.parse(data) : SEED_USERS;
+    const raw: User[] = data ? JSON.parse(data) : SEED_USERS;
+    const { list, changed } = this.normalizeUsersList(raw);
+    if (changed && typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(list));
+    }
+    return list;
   }
 
   public addUser(user: Omit<User, 'id' | 'createdAt' | 'lastLogin'>): User {
     const users = this.getUsers();
     const newUser: User = {
       ...user,
-      id: `usr_${Date.now()}`,
+      name: (user.name || 'Utilisateur').trim().slice(0, 120),
+      id: makeId('usr'),
       createdAt: new Date().toISOString().slice(0, 10),
       lastLogin: 'Jamais connecté',
     };
@@ -1405,6 +1657,119 @@ class StoreService {
     const updated = businesses.find((b) => b.id === businessId);
     if (updated) syncDocToFirestore('businesses', businessId, updated);
     this.broadcast();
+  }
+
+  public getBusinessDeletionStats(businessId: string): {
+    users: number;
+    products: number;
+    customers: number;
+    transactions: number;
+    sessions: number;
+  } {
+    return {
+      users: this.getUsers().filter((u) => u.businessId === businessId && u.id !== 'usr_dev').length,
+      products: this.getProducts(businessId).length,
+      customers: this.getCustomers(businessId).length,
+      transactions: this.getTransactions(businessId).length,
+      sessions: this.getSessions(businessId).length,
+    };
+  }
+
+  private removeBusinessLocally(businessId: string): {
+    removed: boolean;
+    businessName?: string;
+    stats: { users: number; products: number; customers: number; transactions: number; sessions: number };
+  } {
+    const businesses = this.getBusinesses();
+    const target = businesses.find((b) => b.id === businessId);
+    const stats = this.getBusinessDeletionStats(businessId);
+
+    this.markBusinessDeletedLocally(businessId);
+    purgePendingSyncForBusiness(businessId);
+
+    const remainingBusinesses = businesses.filter((b) => b.id !== businessId);
+    localStorage.setItem(STORAGE_KEYS.BUSINESSES, JSON.stringify(remainingBusinesses));
+
+    const remainingUsers = this.getUsers().filter(
+      (u) => u.id === 'usr_dev' || u.role === 'developer' || u.businessId !== businessId
+    );
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(remainingUsers));
+
+    localStorage.setItem(
+      STORAGE_KEYS.PRODUCTS,
+      JSON.stringify(this.getProducts().filter((p) => p.businessId !== businessId))
+    );
+    localStorage.setItem(
+      STORAGE_KEYS.CUSTOMERS,
+      JSON.stringify(this.getCustomers().filter((c) => c.businessId !== businessId))
+    );
+    localStorage.setItem(
+      STORAGE_KEYS.TRANSACTIONS,
+      JSON.stringify(this.getTransactions().filter((t) => t.businessId !== businessId))
+    );
+    localStorage.setItem(
+      STORAGE_KEYS.CREDIT_SETTLEMENTS,
+      JSON.stringify(this.getCreditSettlements().filter((s) => s.businessId !== businessId))
+    );
+    localStorage.setItem(
+      STORAGE_KEYS.SESSIONS,
+      JSON.stringify(this.getSessions().filter((s) => s.businessId !== businessId))
+    );
+    localStorage.setItem(
+      STORAGE_KEYS.NOTIFICATIONS,
+      JSON.stringify(this.getAllNotificationsRaw().filter((n) => n.businessId !== businessId))
+    );
+    localStorage.setItem(
+      STORAGE_KEYS.MOVEMENTS,
+      JSON.stringify(this.getStockMovements().filter((m) => m.businessId !== businessId))
+    );
+
+    // Ensure currentUserId remains valid
+    const currentUserId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
+    if (currentUserId && !remainingUsers.some((u) => u.id === currentUserId)) {
+      const fallbackUser = remainingUsers.find((u) => u.id === 'usr_dev') || remainingUsers[0];
+      if (fallbackUser) {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, fallbackUser.id);
+      }
+    }
+
+    this.broadcast();
+    return { removed: Boolean(target), businessName: target?.name, stats };
+  }
+
+  public async deleteBusiness(businessId: string): Promise<{
+    localDeleted: boolean;
+    cloudDeleted: boolean;
+    cloudDeletedDocs: number;
+    cloudError?: string;
+    businessName?: string;
+    stats: { users: number; products: number; customers: number; transactions: number; sessions: number };
+  }> {
+    const localRes = this.removeBusinessLocally(businessId);
+
+    this.addNotification({
+      targetRole: 'developer',
+      businessId: 'all',
+      title: `Commerce supprimé : ${localRes.businessName || businessId}`,
+      message: `Suppression définitive de la base (${localRes.stats.users} comptes, ${localRes.stats.products} articles, ${localRes.stats.transactions} ventes).`,
+      type: 'security',
+      priority: 'high',
+    });
+
+    const cloudRes = await deleteBusinessCascadeFromFirestore(businessId);
+
+    return {
+      localDeleted: true,
+      cloudDeleted: cloudRes.success,
+      cloudDeletedDocs: cloudRes.deletedDocsCount,
+      cloudError: cloudRes.errorMessage,
+      businessName: localRes.businessName,
+      stats: localRes.stats,
+    };
+  }
+
+  public async retryDeleteBusinessFromCloud(businessId: string) {
+    return deleteBusinessCascadeFromFirestore(businessId);
   }
 
   public generateBusinessAccessCode(businessId: string): string {
@@ -1629,13 +1994,13 @@ class StoreService {
     expDate.setMonth(expDate.getMonth() + 12);
 
     const newBiz: Business = {
-      id: `biz_${Date.now()}`,
-      name: biz.name.trim(),
+      id: makeId('biz'),
+      name: biz.name.trim().slice(0, 120),
       tradeType: biz.tradeType || 'Commerce Général',
       currency: biz.currency || 'FCFA',
-      phone: biz.phone?.trim() || '+225 00 00 00 00',
-      address: biz.address?.trim() || 'Abidjan, Côte d\'Ivoire',
-      ownerName: biz.ownerName?.trim() || 'Propriétaire',
+      phone: (biz.phone?.trim() || '+225 00 00 00 00').slice(0, 30),
+      address: (biz.address?.trim() || 'Abidjan, Côte d\'Ivoire').slice(0, 200),
+      ownerName: (biz.ownerName?.trim() || 'Propriétaire').slice(0, 100),
       subscriptionPlan: biz.subscriptionPlan || 'pro',
       subscriptionStatus: biz.subscriptionStatus || 'active',
       subscriptionExpiresAt: biz.subscriptionExpiresAt || expDate.toISOString().slice(0, 10),
@@ -1665,10 +2030,10 @@ class StoreService {
       .slice(0, 10) || 'commerce';
 
     const ownerUser: User = {
-      id: `usr_owner_${Date.now()}`,
-      name: `${cleanOwnerName} (Propriétaire)`,
-      email: biz.ownerEmail?.trim() || `${slugOwner}@${slugBiz}.com`,
-      phone: biz.ownerPhone?.trim() || newBiz.phone,
+      id: makeId('usr_owner'),
+      name: `${cleanOwnerName} (Propriétaire)`.slice(0, 120),
+      email: (biz.ownerEmail?.trim() || `${slugOwner}@${slugBiz}.com`).slice(0, 120),
+      phone: (biz.ownerPhone?.trim() || newBiz.phone).slice(0, 30),
       role: 'owner',
       businessId: newBiz.id,
       pinCode: finalOwnerPin,
@@ -1679,10 +2044,10 @@ class StoreService {
 
     // 5. Create default Cashier account automatically
     const cashierUser: User = {
-      id: `usr_cashier_${Date.now() + 1}`,
+      id: makeId('usr_cashier'),
       name: 'Caissier(ère) 1',
-      email: `caisse1@${slugBiz}.com`,
-      phone: newBiz.phone,
+      email: `caisse1@${slugBiz}.com`.slice(0, 120),
+      phone: newBiz.phone.slice(0, 30),
       role: 'cashier',
       businessId: newBiz.id,
       pinCode: finalCashierPin,
@@ -1795,7 +2160,8 @@ class StoreService {
     const products = this.getProducts();
     const newProd: Product = {
       ...product,
-      id: `prod_${Date.now()}`,
+      name: (product.name || 'Article').trim().slice(0, 150),
+      id: makeId('prod'),
     };
     products.push(newProd);
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
@@ -1888,7 +2254,9 @@ class StoreService {
     const list = this.getCustomers();
     const newCust: Customer = {
       ...cust,
-      id: `cust_${Date.now()}`,
+      name: (cust.name || 'Client').trim().slice(0, 100),
+      phone: (cust.phone || '').trim().slice(0, 30),
+      id: makeId('cust'),
       totalPurchases: 0,
     };
     list.push(newCust);
@@ -2037,7 +2405,7 @@ class StoreService {
 
     const newTx: SaleTransaction = {
       ...saleData,
-      id: `tx_${Date.now()}`,
+      id: makeId('tx'),
       ticketNumber,
       developerFee: 20, // 20 F per sale strictly
       timestamp: dateStr.toISOString().replace('T', ' ').slice(0, 19),
@@ -2259,10 +2627,10 @@ class StoreService {
   public openCashSession(businessId: string, cashierId: string, cashierName: string, openingFloat: number): CashRegisterSession {
     const sessions = this.getSessions();
     const newSession: CashRegisterSession = {
-      id: `sess_${Date.now()}`,
+      id: makeId('sess'),
       businessId,
       cashierId,
-      cashierName,
+      cashierName: cashierName.slice(0, 100),
       openedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
       openingFloat,
       expectedCash: openingFloat,
@@ -2378,9 +2746,13 @@ class StoreService {
   }
 
   // --- Push Notifications ---
-  public getNotifications(role?: UserRole, businessId?: string): PushNotification[] {
+  private getAllNotificationsRaw(): PushNotification[] {
     const data = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    const notifs: PushNotification[] = data ? JSON.parse(data) : SEED_NOTIFICATIONS;
+    return data ? JSON.parse(data) : SEED_NOTIFICATIONS;
+  }
+
+  public getNotifications(role?: UserRole, businessId?: string): PushNotification[] {
+    const notifs = this.getAllNotificationsRaw();
 
     return notifs.filter((n) => {
       // Strict confidentiality: Non-developer users (cashier, manager, owner) must NEVER see developer-only notifications
@@ -2398,10 +2770,12 @@ class StoreService {
   }
 
   public addNotification(notif: Omit<PushNotification, 'id' | 'timestamp' | 'read'>) {
-    const notifs: PushNotification[] = this.getNotifications();
+    const notifs: PushNotification[] = this.getAllNotificationsRaw();
     const newNotif: PushNotification = {
       ...notif,
-      id: `notif_${Date.now()}`,
+      title: (notif.title || 'Notification').trim().slice(0, 150),
+      message: (notif.message || '').trim().slice(0, 500),
+      id: makeId('notif'),
       timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
       read: false,
     };
@@ -2412,7 +2786,7 @@ class StoreService {
   }
 
   public markNotificationAsRead(notifId: string) {
-    const notifs: PushNotification[] = this.getNotifications().map((n) =>
+    const notifs: PushNotification[] = this.getAllNotificationsRaw().map((n) =>
       n.id === notifId ? { ...n, read: true } : n
     );
     localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(notifs));
@@ -2422,9 +2796,18 @@ class StoreService {
   }
 
   public markAllNotificationsAsRead() {
-    const notifs: PushNotification[] = this.getNotifications().map((n) => ({ ...n, read: true }));
+    const raw = this.getAllNotificationsRaw();
+    const changedItems: PushNotification[] = [];
+    const notifs: PushNotification[] = raw.map((n) => {
+      if (!n.read) {
+        const updated = { ...n, read: true };
+        changedItems.push(updated);
+        return updated;
+      }
+      return n;
+    });
     localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(notifs));
-    notifs.forEach((n) => syncDocToFirestore('notifications', n.id, n));
+    changedItems.forEach((n) => syncDocToFirestore('notifications', n.id, n));
     this.broadcast();
   }
 
@@ -2442,7 +2825,10 @@ class StoreService {
     const movs = this.getStockMovements();
     const newMov: StockMovement = {
       ...mov,
-      id: `mov_${Date.now()}`,
+      productName: (mov.productName || '').slice(0, 150),
+      reason: (mov.reason || '').slice(0, 200),
+      userName: (mov.userName || '').slice(0, 100),
+      id: makeId('mov'),
       timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
     };
     movs.unshift(newMov);
@@ -2453,6 +2839,7 @@ class StoreService {
   // Reset database to initial seed
   public resetToFactory() {
     localStorage.clear();
+    clearPosSyncTrackingStorage();
     this.initStorage();
     this.broadcast();
   }

@@ -19,8 +19,9 @@ import {
   WifiOff,
   Maximize,
   Minimize,
+  RefreshCw,
 } from 'lucide-react';
-import { subscribeSyncState, CloudSyncState } from '../services/firebaseSync';
+import { subscribeSyncState, getCloudSyncState, CloudSyncState } from '../services/firebaseSync';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface TopBarProps {
@@ -61,13 +62,8 @@ export const TopBar: React.FC<TopBarProps> = ({
     return () => unsub();
   }, [currentUser.role, currentBusiness.id]);
 
-  const [cloudSync, setCloudSync] = useState<CloudSyncState>({
-    isOnline: true,
-    isFirebaseActive: true,
-    lastSyncTimestamp: Date.now(),
-    syncInProgress: false,
-    error: null,
-  });
+  const [cloudSync, setCloudSync] = useState<CloudSyncState>(() => getCloudSyncState());
+  const [manualSyncing, setManualSyncing] = useState<boolean>(false);
 
   const [isBrowserOnline, setIsBrowserOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
@@ -346,36 +342,79 @@ export const TopBar: React.FC<TopBarProps> = ({
         {/* PWA Install Button */}
         <PWAInstallButton />
 
-        {/* Network & Cloud Sync Live Badge */}
+        {/* Network & Cloud Sync Live Badge (clickable to force sync) */}
         {!isBrowserOnline ? (
           <div
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-xs animate-pulse"
-            title="Mode Hors-ligne actif : l'application fonctionne sans connexion Internet. Vos encaissements et sessions sont enregistrés localement."
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border bg-rose-500/20 text-rose-500 dark:text-rose-300 border-rose-500/40 shadow-xs"
+            title="Mode Hors-ligne actif : vos encaissements et données sont enregistrés localement et seront synchronisés dès le retour d'Internet."
           >
-            <WifiOff className="w-3.5 h-3.5 text-rose-400" />
-            <span className="whitespace-nowrap">Hors-ligne (Actif)</span>
+            <WifiOff className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
+            <span className="whitespace-nowrap">
+              Hors-ligne{cloudSync.pendingCount > 0 ? ` (${cloudSync.pendingCount})` : ''}
+            </span>
           </div>
         ) : (
-          <div
-            className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-colors ${
-              cloudSync.isOnline
+          <button
+            type="button"
+            onClick={async () => {
+              if (manualSyncing) return;
+              setManualSyncing(true);
+              try {
+                await store.syncNow();
+              } finally {
+                setManualSyncing(false);
+              }
+            }}
+            disabled={manualSyncing || cloudSync.syncInProgress}
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+              cloudSync.pendingCount > 0 || !cloudSync.isFirebaseActive
                 ? isLight
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                  : 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.15)]'
+                  ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-800'
+                  : 'bg-amber-950/40 hover:bg-amber-950/60 border-amber-500/40 text-amber-300'
                 : isLight
-                ? 'bg-amber-50 border-amber-200 text-amber-800'
-                : 'bg-amber-950/40 border-amber-500/30 text-amber-300'
+                ? 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-800'
+                : 'bg-emerald-950/40 hover:bg-emerald-950/60 border-emerald-500/30 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.15)]'
             }`}
-            title="Synchronisation temps réel Firebase Cloud Firestore (europe-west2) active"
+            title={
+              cloudSync.error
+                ? `Cliquer pour synchroniser — ${cloudSync.error}`
+                : cloudSync.pendingCount > 0
+                ? `${cloudSync.pendingCount} modification(s) en attente. Cliquer pour synchroniser.`
+                : cloudSync.isFirebaseActive
+                ? 'Synchronisation Cloud Firestore active — Cliquer pour vérifier'
+                : 'Connexion Cloud en attente — Cliquer pour relancer la synchronisation'
+            }
           >
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                cloudSync.isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
-              }`}
-            />
-            <Cloud className={`w-3.5 h-3.5 ${cloudSync.isOnline ? 'text-emerald-500' : 'text-amber-500'}`} />
-            <span className="font-semibold whitespace-nowrap">Cloud Sync</span>
-          </div>
+            {manualSyncing || cloudSync.syncInProgress ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-500" />
+            ) : (
+              <>
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    cloudSync.pendingCount > 0 || !cloudSync.isFirebaseActive
+                      ? 'bg-amber-500 animate-pulse'
+                      : 'bg-emerald-500 animate-pulse'
+                  }`}
+                />
+                <Cloud
+                  className={`w-3.5 h-3.5 ${
+                    cloudSync.pendingCount > 0 || !cloudSync.isFirebaseActive
+                      ? 'text-amber-500'
+                      : 'text-emerald-500'
+                  }`}
+                />
+              </>
+            )}
+            <span className="font-semibold whitespace-nowrap">
+              {manualSyncing || cloudSync.syncInProgress
+                ? 'Synchro...'
+                : cloudSync.pendingCount > 0
+                ? `${cloudSync.pendingCount} en attente`
+                : cloudSync.isFirebaseActive
+                ? 'Cloud Sync'
+                : 'Relancer Sync'}
+            </span>
+          </button>
         )}
 
         {/* MODE CLAIR / MODE NÉON SWITCHER */}

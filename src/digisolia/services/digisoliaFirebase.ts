@@ -323,11 +323,12 @@ export async function fetchUserFeedback(appId: string, uid: string): Promise<Dig
   try {
     const q = query(
       collection(db, 'apps', appId, 'feedback'),
-      where('authorUid', '==', uid),
-      orderBy('createdAt', 'desc')
+      where('authorUid', '==', uid)
     );
     const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as DigiSoliaFeedbackItem);
+    return snap.docs
+      .map((d) => d.data() as DigiSoliaFeedbackItem)
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
   }
@@ -404,11 +405,12 @@ export async function fetchUserSupportTickets(
   try {
     const q = query(
       collection(db, 'apps', appId, 'support'),
-      where('authorUid', '==', uid),
-      orderBy('createdAt', 'desc')
+      where('authorUid', '==', uid)
     );
     const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as DigiSoliaSupportTicket);
+    return snap.docs
+      .map((d) => d.data() as DigiSoliaSupportTicket)
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
   }

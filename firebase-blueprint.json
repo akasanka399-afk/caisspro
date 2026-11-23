@@ -271,6 +271,25 @@
         "timestamp": { "type": "string" }
       },
       "required": ["id", "businessId", "productId", "type", "quantity", "timestamp"]
+    },
+    "CreditSettlement": {
+      "title": "CreditSettlement",
+      "description": "Customer debt settlement / installment payment record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string", "maxLength": 100 },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "mobile_money", "card"] },
+        "timestamp": { "type": "string" },
+        "cashierName": { "type": "string", "maxLength": 100 },
+        "notes": { "type": "string", "maxLength": 300 },
+        "previousBalance": { "type": "number" },
+        "newBalance": { "type": "number" }
+      },
+      "required": ["id", "businessId", "customerId", "amount", "paymentMethod", "timestamp"]
     }
   },
   "firestore": {
@@ -325,6 +344,10 @@
     "/movements/{movementId}": {
       "schema": "StockMovement",
       "description": "Inventory movement and replenishment audit logs"
+    },
+    "/credit_settlements/{settlementId}": {
+      "schema": "CreditSettlement",
+      "description": "Customer debt and installment payment records"
     }
   }
 }

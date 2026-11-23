@@ -31,6 +31,23 @@ import {
   useDigiSoliaAuth,
 } from './digisolia';
 
+const FALLBACK_EMPTY_BUSINESS: Business = {
+  id: 'biz_none',
+  name: 'Aucun commerce sélectionné',
+  tradeType: 'Non configuré',
+  currency: 'FCFA',
+  phone: '',
+  address: '',
+  ownerName: 'Développeur',
+  subscriptionPlan: 'starter',
+  subscriptionStatus: 'trial',
+  subscriptionExpiresAt: '2099-12-31',
+  totalSalesCount: 0,
+  developerFeeRate: 20,
+  createdAt: '2026-01-01',
+  accessCode: '---',
+};
+
 function MainLayout() {
   const { theme } = useTheme();
   const { firebaseUser } = useDigiSoliaAuth();
@@ -39,7 +56,7 @@ function MainLayout() {
   const [currentBusiness, setCurrentBusiness] = useState<Business>(() => {
     const user = store.getCurrentUser();
     const allBiz = store.getBusinesses();
-    return allBiz.find((b) => b.id === user.businessId) || allBiz[0];
+    return allBiz.find((b) => b.id === user.businessId) || allBiz[0] || FALLBACK_EMPTY_BUSINESS;
   });
   const [notifications, setNotifications] = useState<PushNotification[]>(() =>
     store.getNotifications(currentUser.role, currentBusiness.id)
@@ -72,7 +89,7 @@ function MainLayout() {
       const user = store.getCurrentUser();
       setCurrentUser(user);
       const allBiz = store.getBusinesses();
-      const biz = allBiz.find((b) => b.id === user.businessId) || allBiz[0];
+      const biz = allBiz.find((b) => b.id === user.businessId) || allBiz[0] || FALLBACK_EMPTY_BUSINESS;
       setCurrentBusiness(biz);
       setActiveSession(store.getActiveCashSession(biz.id));
       setNotifications(store.getNotifications(user.role, biz.id));
@@ -109,7 +126,7 @@ function MainLayout() {
     setCurrentUser(user);
 
     const allBiz = store.getBusinesses();
-    const biz = allBiz.find((b) => b.id === user.businessId) || allBiz[0];
+    const biz = allBiz.find((b) => b.id === user.businessId) || allBiz[0] || FALLBACK_EMPTY_BUSINESS;
     setCurrentBusiness(biz);
 
     if (user.role === 'owner') {

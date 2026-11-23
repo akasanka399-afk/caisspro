@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { subscribeSyncState, CloudSyncState } from '../../services/firebaseSync';
+import { subscribeSyncState, getCloudSyncState, CloudSyncState } from '../../services/firebaseSync';
 
 export interface OnlineStatusInfo {
   isBrowserOnline: boolean;
@@ -10,13 +10,7 @@ export function useOnlineStatus(): OnlineStatusInfo {
   const [isBrowserOnline, setIsBrowserOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [cloudSync, setCloudSync] = useState<CloudSyncState>({
-    isOnline: isBrowserOnline,
-    isFirebaseActive: false,
-    lastSyncTimestamp: Date.now(),
-    syncInProgress: false,
-    error: null,
-  });
+  const [cloudSync, setCloudSync] = useState<CloudSyncState>(() => getCloudSyncState());
 
   useEffect(() => {
     const onOnline = () => setIsBrowserOnline(true);

@@ -32,8 +32,12 @@ import {
   Smartphone,
   Share2,
   Shield,
+  Trash2,
+  Cloud,
+  LogIn,
 } from 'lucide-react';
 import { DigiSoliaAdminPanel } from '../digisolia/admin/DigiSoliaAdminPanel';
+import { useDigiSoliaAuth } from '../digisolia';
 
 interface DeveloperDashboardViewProps {
   currentUser: User;
@@ -56,6 +60,7 @@ export interface CredentialsHandoverData {
 export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ currentUser }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
+  const { firebaseUser, adminProfile, signInWithGoogle } = useDigiSoliaAuth();
 
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -77,6 +82,21 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
 
   // Business creation & edit modal
   const [showAddBizModal, setShowAddBizModal] = useState<boolean>(false);
+
+  // Business deletion modal state
+  const [deleteTargetBiz, setDeleteTargetBiz] = useState<Business | null>(null);
+  const [deleteConfirmChecked, setDeleteConfirmChecked] = useState<boolean>(false);
+  const [isDeletingBiz, setIsDeletingBiz] = useState<boolean>(false);
+  const [pendingCloudDeleteBiz, setPendingCloudDeleteBiz] = useState<{ id: string; name: string } | null>(null);
+
+  // Access code regeneration modal state
+  const [regenTargetBiz, setRegenTargetBiz] = useState<Business | null>(null);
+
+  // Inline feedback banner (replaces window.alert)
+  const [devBanner, setDevBanner] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
 
   // New business form fields
   const [newBizName, setNewBizName] = useState<string>('');
@@ -170,7 +190,74 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({ 
       subscriptionStatus: 'active',
       subscriptionExpiresAt: nextYear.toISOString().slice(0, 10),
     });
-    alert(`Abonnement de "${biz.name}" renouvelé avec succès jusqu'au ${nextYear.toLocaleDateString('fr-FR')}.`);
+    playSoundEffect('cash');
+    setDevBanner({
+      type: 'success',
+      message: `Abonnement de « ${biz.name} » renouvelé avec succès jusqu'au ${nextYear.toLocaleDateString('fr-FR')}.`,
+    });
+  };
+
+  const handleOpenDeleteBusiness = (biz: Business) => {
+    setDeleteTargetBiz(biz);
+    setDeleteConfirmChecked(false);
+    playSoundEffect('beep');
+  };
+
+  const handleConfirmDeleteBusiness = async () => {
+    if (!deleteTargetBiz || !deleteConfirmChecked || isDeletingBiz) return;
+    setIsDeletingBiz(true);
+    try {
+      const result = await store.deleteBusiness(deleteTargetBiz.id);
+      const targetName = deleteTargetBiz.name;
+      const targetId = deleteTargetBiz.id;
+      setDeleteTargetBiz(null);
+      setDeleteConfirmChecked(false);
+
+      if (result.cloudDeleted) {
+        playSoundEffect('cash');
+        setPendingCloudDeleteBiz(null);
+        setDevBanner({
+          type: 'success',
+          message: `Commerce « ${targetName} » supprimé de la base locale et de Cloud Firestore (${result.cloudDeletedDocs} documents purgés).`,
+        });
+      } else {
+        playSoundEffect('alert');
+        setPendingCloudDeleteBiz({ id: targetId, name: targetName });
+        setDevBanner({
+          type: 'warning',
+          message: `« ${targetName} » supprimé de la base locale. ${result.cloudError || 'Connectez le compte Google Super-Admin pour purger aussi Cloud Firestore.'}`,
+        });
+      }
+    } finally {
+      setIsDeletingBiz(false);
+    }
+  };
+
+  const handleConnectGoogleAndPurge = async () => {
+    try {
+      await signInWithGoogle();
+      if (pendingCloudDeleteBiz) {
+        const res = await store.retryDeleteBusinessFromCloud(pendingCloudDeleteBiz.id);
+        if (res.success) {
+          playSoundEffect('cash');
+          setDevBanner({
+            type: 'success',
+            message: `Purge Cloud Firestore finalisée pour « ${pendingCloudDeleteBiz.name} » (${res.deletedDocsCount} documents supprimés).`,
+          });
+          setPendingCloudDeleteBiz(null);
+        } else {
+          setDevBanner({
+            type: 'error',
+            message: res.errorMessage || 'Permissions Cloud insuffisantes pour ce compte Google.',
+          });
+        }
+      }
+    } catch (err: any) {
+      setDevBanner({
+        type: 'error',
+        message: err?.message || 'Connexion Google annulée.',
+      });
+    }
   };
 
   // Open modal with pre-generated connection code and owner default PIN
@@ -322,7 +409,10 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
     setShowBroadcastModal(false);
     setBroadcastTitle('');
     setBroadcastMessage('');
-    alert('Notification push diffusée avec succès sur le réseau !');
+    setDevBanner({
+      type: 'success',
+      message: 'Notification push diffusée avec succès sur le réseau !',
+    });
   };
 
   const [copiedBizId, setCopiedBizId] = useState<string | null>(null);
@@ -335,13 +425,19 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
   };
 
   const handleRegenerateCode = (b: Business) => {
-    const confirmRegen = window.confirm(
-      `Voulez-vous vraiment générer un NOUVEAU code d'accès pour "${b.name}" ? L'ancien code sera immédiatement révoqué.`
-    );
-    if (!confirmRegen) return;
-    const newCode = store.generateBusinessAccessCode(b.id);
+    setRegenTargetBiz(b);
+  };
+
+  const confirmRegenerateCode = () => {
+    if (!regenTargetBiz) return;
+    const targetName = regenTargetBiz.name;
+    const newCode = store.generateBusinessAccessCode(regenTargetBiz.id);
+    setRegenTargetBiz(null);
     playSoundEffect('cash');
-    alert(`Nouveau code généré pour "${b.name}" : ${newCode}\nCe code est immédiatement utilisable par le caissier en ligne ou hors-ligne.`);
+    setDevBanner({
+      type: 'success',
+      message: `Nouveau code généré pour « ${targetName} » : ${newCode} (utilisable en ligne ou hors-ligne).`,
+    });
   };
 
   // If locked
@@ -452,7 +548,7 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
             <span>Diffuser Push</span>
           </button>
           <button
-            onClick={() => setShowAddBizModal(true)}
+            onClick={handleOpenAddBizModal}
             className="px-4 py-2 text-xs font-bold text-white bg-purple-600 hover:bg-purple-700 rounded-lg flex items-center gap-1.5 transition-colors shadow-sm shadow-purple-600/30 active:scale-95"
           >
             <Plus className="w-4 h-4" />
@@ -460,6 +556,53 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
           </button>
         </div>
       </div>
+
+      {/* Inline Feedback Banner */}
+      {devBanner && (
+        <div
+          className={`p-3.5 rounded-xl border flex flex-wrap items-center justify-between gap-3 text-xs ${
+            devBanner.type === 'success'
+              ? isLight
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                : 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+              : devBanner.type === 'warning'
+              ? isLight
+                ? 'bg-amber-50 border-amber-300 text-amber-900'
+                : 'bg-amber-950/40 border-amber-500/40 text-amber-200'
+              : isLight
+              ? 'bg-rose-50 border-rose-300 text-rose-900'
+              : 'bg-rose-950/40 border-rose-500/40 text-rose-200'
+          }`}
+        >
+          <div className="flex items-center gap-2 font-semibold">
+            {devBanner.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+            )}
+            <span>{devBanner.message}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {pendingCloudDeleteBiz && (
+              <button
+                type="button"
+                onClick={handleConnectGoogleAndPurge}
+                className="px-3 py-1.5 rounded-lg font-bold bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Connecter Google & Purger Cloud</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setDevBanner(null)}
+              className="px-2 py-1 rounded hover:bg-black/10 font-bold cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* KPI GLOBAL PLATFORM CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -913,7 +1056,15 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
                               b.subscriptionStatus === 'active'
                                 ? isLight
-                                : 'bg-emerald-950/40 text-emerald-400 border-emerald-800'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : 'bg-emerald-950/40 text-emerald-400 border-emerald-800'
+                                : b.subscriptionStatus === 'trial'
+                                ? isLight
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-amber-950/40 text-amber-400 border-amber-800'
+                                : isLight
+                                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                : 'bg-rose-950/40 text-rose-400 border-rose-800'
                             }`}
                           >
                             {b.subscriptionStatus === 'active' ? 'Actif' : b.subscriptionStatus === 'trial' ? 'Essai' : 'Suspendu'}
@@ -923,7 +1074,7 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => handleViewBusinessCredentials(b)}
-                              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors inline-flex items-center gap-1 ${
+                              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer ${
                                 isLight
                                   ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
                                   : 'bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 border border-amber-500/40'
@@ -935,7 +1086,7 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
                             </button>
                             <button
                               onClick={() => handleRenewSubscription(b)}
-                              className={`px-2 py-1 rounded text-[11px] font-bold transition-colors ${
+                              className={`px-2 py-1 rounded text-[11px] font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                                 isLight
                                   ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300'
                                   : 'bg-neutral-800 hover:bg-neutral-700 text-emerald-400'
@@ -946,11 +1097,11 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
                             </button>
                             <button
                               onClick={() => handleToggleBusinessStatus(b)}
-                              className={`p-1.5 rounded transition-colors ${
+                              className={`p-1.5 rounded transition-colors cursor-pointer ${
                                 b.subscriptionStatus === 'active'
                                   ? isLight
-                                    ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
-                                    : 'text-neutral-400 hover:text-rose-400 hover:bg-neutral-800'
+                                    ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'
+                                    : 'text-neutral-400 hover:text-amber-400 hover:bg-neutral-800'
                                   : isLight
                                   ? 'text-emerald-700 hover:bg-emerald-50'
                                   : 'text-emerald-400 hover:bg-neutral-800'
@@ -958,6 +1109,19 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
                               title={b.subscriptionStatus === 'active' ? 'Suspendre l\'accès' : 'Débloquer l\'accès'}
                             >
                               {b.subscriptionStatus === 'active' ? <XCircle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteBusiness(b)}
+                              className={`px-2 py-1 rounded text-[11px] font-bold transition-colors inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer border ${
+                                isLight
+                                  ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                                  : 'bg-rose-950/30 hover:bg-rose-900/50 text-rose-400 border-rose-800/70'
+                              }`}
+                              title="Supprimer définitivement ce commerce de la base"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Supprimer</span>
                             </button>
                           </div>
                         </td>
@@ -1843,6 +2007,180 @@ Votre commerce est activé avec succès sur la plateforme Caisse Pro.
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirm Business Access Code Regeneration */}
+      {regenTargetBiz && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div
+            className={`rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border ${
+              isLight ? 'retail-card bg-white border-slate-300' : 'neon-card bg-neutral-900 border-neutral-800'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-amber-500/15 text-amber-500 border border-amber-500/30">
+                <RefreshCw className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className={`text-sm font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                  Régénérer le Code d&apos;Accès
+                </h3>
+                <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                  {regenTargetBiz.name} ({regenTargetBiz.accessCode})
+                </p>
+              </div>
+            </div>
+            <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-neutral-300'}`}>
+              L&apos;ancien code sera immédiatement révoqué et remplacé par un nouveau code unique utilisable en ligne et hors-ligne.
+            </p>
+            <div className={`flex justify-end gap-2 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-neutral-800'}`}>
+              <button
+                type="button"
+                onClick={() => setRegenTargetBiz(null)}
+                className={`px-3.5 py-2 rounded-lg text-xs font-medium cursor-pointer ${
+                  isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-neutral-800 text-neutral-300'
+                }`}
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={confirmRegenerateCode}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white cursor-pointer"
+              >
+                Confirmer la régénération
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirm Permanent Business Deletion */}
+      {deleteTargetBiz && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div
+            className={`rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border ${
+              isLight
+                ? 'retail-card bg-white border-rose-300 text-slate-900'
+                : 'neon-card bg-neutral-900 border-rose-500/40 text-white'
+            }`}
+          >
+            <div className={`flex items-center justify-between pb-3 border-b ${isLight ? 'border-slate-200' : 'border-neutral-800'}`}>
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-rose-500/15 text-rose-500 border border-rose-500/30">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black">Supprimer le Commerce de la Base</h3>
+                  <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                    Action irréversible · Code {deleteTargetBiz.accessCode}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeleteTargetBiz(null)}
+                className={`p-1 rounded-lg ${isLight ? 'text-slate-400 hover:bg-slate-100' : 'text-neutral-400 hover:bg-neutral-800'}`}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className={`p-3 rounded-xl border text-xs space-y-2 ${
+              isLight ? 'bg-rose-50 border-rose-200 text-rose-950' : 'bg-rose-950/30 border-rose-800/60 text-rose-200'
+            }`}>
+              <p className="font-bold">
+                Vous êtes sur le point de supprimer définitivement : <span className="underline">{deleteTargetBiz.name}</span>
+              </p>
+              {(() => {
+                const stats = store.getBusinessDeletionStats(deleteTargetBiz.id);
+                return (
+                  <div className="grid grid-cols-2 gap-1.5 pt-1 text-[11px] font-mono">
+                    <span>• Comptes équipe : <strong>{stats.users}</strong></span>
+                    <span>• Articles stock : <strong>{stats.products}</strong></span>
+                    <span>• Ventes / Tickets : <strong>{stats.transactions}</strong></span>
+                    <span>• Clients & Dettes : <strong>{stats.customers}</strong></span>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Cloud Firestore Super-Admin Status */}
+            <div className={`p-3 rounded-xl border text-xs space-y-2 ${
+              firebaseUser && adminProfile
+                ? isLight
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300'
+                : isLight
+                ? 'bg-amber-50 border-amber-200 text-amber-900'
+                : 'bg-amber-950/30 border-amber-700/50 text-amber-200'
+            }`}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 font-semibold">
+                  <Cloud className="w-4 h-4 shrink-0" />
+                  <span>
+                    {firebaseUser && adminProfile
+                      ? `Cloud Firestore Super-Admin prêt (${firebaseUser.email})`
+                      : 'Cloud Firestore : session Google Super-Admin non connectée'}
+                  </span>
+                </div>
+              </div>
+              {!(firebaseUser && adminProfile) && (
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <span className="text-[11px] opacity-85">
+                    Sans connexion Google, seule la base locale sera effacée.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => signInWithGoogle()}
+                    className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-bold flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <LogIn className="w-3 h-3" />
+                    <span>Connecter Google</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <label className="flex items-start gap-2 text-xs cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={deleteConfirmChecked}
+                onChange={(e) => setDeleteConfirmChecked(e.target.checked)}
+                className="mt-0.5 rounded border-rose-400 text-rose-600 focus:ring-rose-500"
+              />
+              <span className={isLight ? 'text-slate-700' : 'text-neutral-300'}>
+                Je confirme la suppression définitive de ce commerce, de ses utilisateurs et de tout son historique de la base de données.
+              </span>
+            </label>
+
+            <div className={`flex justify-end gap-2 pt-3 border-t ${isLight ? 'border-slate-200' : 'border-neutral-800'}`}>
+              <button
+                type="button"
+                onClick={() => setDeleteTargetBiz(null)}
+                disabled={isDeletingBiz}
+                className={`px-4 py-2 rounded-lg text-xs font-medium cursor-pointer ${
+                  isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-neutral-800 text-neutral-300'
+                }`}
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={!deleteConfirmChecked || isDeletingBiz}
+                onClick={handleConfirmDeleteBusiness}
+                className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0 ${
+                  !deleteConfirmChecked || isDeletingBiz
+                    ? 'bg-rose-400/40 text-white/60 cursor-not-allowed'
+                    : 'bg-rose-600 hover:bg-rose-700 text-white shadow-sm cursor-pointer'
+                }`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeletingBiz ? 'Suppression en cours...' : 'Supprimer définitivement'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -96,6 +96,9 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     label: string;
     amount: number;
     quantity: number;
+    productId?: string;
+    barcode?: string;
+    maxStock?: number;
   }[]>([]);
   const [directPaymentMethod, setDirectPaymentMethod] = useState<PaymentMethod>('cash');
   const [directCashReceived, setDirectCashReceived] = useState<string>('');
@@ -130,6 +133,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   // Refs for keyboard navigation & direct typing
   const searchInputRef = useRef<HTMLInputElement>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const directBarcodeInputRef = useRef<HTMLInputElement>(null);
   const cashInputRef = useRef<HTMLInputElement>(null);
   const directInputRef = useRef<HTMLInputElement>(null);
   const directLabelInputRef = useRef<HTMLInputElement>(null);
@@ -515,16 +519,36 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         addToCart(matched, 1);
         setQuickBarcodeNotice(`Scanné : ${matched.name} (${formatMoney(matched.salePrice)})`);
       } else {
-        // Mode Caisse Rapide: add or increment in directItems
+        // Mode Caisse Rapide: check stock and add or increment in directItems with real productId/barcode
+        if (matched.stock <= 0) {
+          playSoundEffect('error');
+          showErrorNotice(`Stock épuisé pour « ${matched.name} ».`);
+          setQuickBarcodeNotice(`Stock épuisé : ${matched.name} (0 en rayon)`);
+          setTimeout(() => setQuickBarcodeNotice(null), 4000);
+          return { success: false, error: 'Stock épuisé' };
+        }
+
+        const existingItem = directItems.find(
+          (it) => it.productId === matched.id || (it.label === matched.name && it.amount === matched.salePrice)
+        );
+        if (existingItem && existingItem.quantity + 1 > matched.stock) {
+          playSoundEffect('error');
+          showErrorNotice(`Quantité demandée (${existingItem.quantity + 1}) supérieure au stock (${matched.stock}).`);
+          return { success: false, error: 'Stock maximum atteint' };
+        }
+
         setDirectItems((prev) => {
           const existingIdx = prev.findIndex(
-            (it) => it.label === matched.name && it.amount === matched.salePrice
+            (it) => it.productId === matched.id || (it.label === matched.name && it.amount === matched.salePrice)
           );
           if (existingIdx >= 0) {
             const updated = [...prev];
             updated[existingIdx] = {
               ...updated[existingIdx],
               quantity: updated[existingIdx].quantity + 1,
+              productId: matched.id,
+              barcode: matched.barcode || matched.code,
+              maxStock: matched.stock,
             };
             return updated;
           }
@@ -535,11 +559,13 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               label: matched.name,
               amount: matched.salePrice,
               quantity: 1,
+              productId: matched.id,
+              barcode: matched.barcode || matched.code,
+              maxStock: matched.stock,
             },
           ];
         });
-        setDirectLabel(matched.name);
-        setQuickBarcodeNotice(`Article scanné : ${matched.name} · ${formatMoney(matched.salePrice)}`);
+        setQuickBarcodeNotice(`Scanné en vente rapide : ${matched.name} · ${formatMoney(matched.salePrice)}`);
       }
 
       setTimeout(() => setQuickBarcodeNotice(null), 3500);
@@ -548,7 +574,6 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       playSoundEffect('error');
       setQuickUnknownBarcode(cleanCode);
       if (posMode === 'direct') {
-        setDirectLabel(`Article #${cleanCode}`);
         setQuickBarcodeNotice(`Code-barres ${cleanCode} non trouvé au catalogue.`);
       } else {
         setQuickBarcodeNotice(`Code-barres ${cleanCode} introuvable dans le catalogue.`);
@@ -570,7 +595,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     }
   };
 
-  // Barcode input form submit (manual keyboard submit in catalog mode)
+  // Barcode input form submit (manual keyboard submit in both Catalog & Caisse Rapide)
   const handleBarcodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!barcodeInput.trim()) return;
@@ -591,8 +616,13 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       const activeEl = document.activeElement as HTMLElement | null;
       const isInput = ['INPUT', 'TEXTAREA'].includes(activeEl?.tagName || '');
 
-      // If user is typing in regular text fields (like search or customer name), ignore unless it's direct amount or barcode
-      if (isInput && activeEl !== directInputRef.current && activeEl !== barcodeInputRef.current) {
+      // If user is typing in regular text fields (like search or customer name), ignore unless it's direct amount or barcode inputs
+      if (
+        isInput &&
+        activeEl !== directInputRef.current &&
+        activeEl !== barcodeInputRef.current &&
+        activeEl !== directBarcodeInputRef.current
+      ) {
         return;
       }
 
@@ -608,6 +638,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
           e.stopPropagation();
           const scannedCode = usbScannerBufferRef.current;
           usbScannerBufferRef.current = '';
+          setBarcodeInput('');
           handleProcessScannedBarcode(scannedCode);
           return;
         }
@@ -623,7 +654,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
     window.addEventListener('keydown', handleGlobalKeyDown, true);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
-  }, [products, posMode, showCameraScannerModal, showRecentSalesModal, selectedTxForCancel, barcodeToCreate, cameraScanPurpose]);
+  }, [products, directItems, posMode, showCameraScannerModal, showRecentSalesModal, selectedTxForCancel, barcodeToCreate, cameraScanPurpose]);
 
   // Mode Catalogue: Validate sale (supporte la validation avec ou sans impression de ticket)
   const handleValidateSale = (shouldPrint: boolean = false) => {
@@ -732,17 +763,23 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
   // Update quantity of an already added item in the accumulated ticket
   const handleUpdateDirectItemQuantity = (itemId: string, delta: number) => {
-    playSoundEffect('beep');
     setDirectItems((prev) =>
       prev
         .map((it) => {
           if (it.id === itemId) {
             const nextQty = it.quantity + delta;
-            return nextQty > 0 ? { ...it, quantity: nextQty } : null;
+            if (nextQty <= 0) return null;
+            if (it.maxStock !== undefined && nextQty > it.maxStock) {
+              playSoundEffect('error');
+              showErrorNotice(`Stock maximum atteint (${it.maxStock}).`);
+              return it;
+            }
+            playSoundEffect('beep');
+            return { ...it, quantity: nextQty };
           }
           return it;
         })
-        .filter((it): it is { id: string; label: string; amount: number; quantity: number } => it !== null)
+        .filter((it): it is NonNullable<typeof it> => it !== null)
     );
   };
 
@@ -806,12 +843,12 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       total: number;
     }[] = [];
 
-    // 1. All accumulated ticket items
+    // 1. All accumulated ticket items (preserving real productId/barcode for scanned catalog articles)
     directItems.forEach((it) => {
       itemsToSale.push({
-        productId: `prod_direct_${it.id}`,
+        productId: it.productId || `prod_direct_${it.id}`,
         productName: it.label,
-        barcode: `EXPRESS-${it.id.slice(-6)}`,
+        barcode: it.barcode || `EXPRESS-${it.id.slice(-6)}`,
         quantity: it.quantity,
         unitPrice: it.amount,
         total: it.amount * it.quantity,
@@ -1266,7 +1303,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               </div>
             </div>
 
-            {/* 2. COMPACT ARTICLE & QUANTITY BAR */}
+            {/* 2. COMPACT BARCODE SCANNER & ARTICLE / QUANTITY BAR */}
             <div
               className={`p-2 rounded-xl border space-y-1.5 transition-all shrink-0 ${
                 isLight
@@ -1274,6 +1311,108 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   : 'neon-card bg-[#090c1a] border-cyan-500/25'
               }`}
             >
+              {/* Scan Code-Barres Vente Rapide (Douchette USB / Saisie / Caméra / Nouveau) */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <form onSubmit={handleBarcodeSubmit} className="relative flex-1 min-w-[190px]">
+                  <Barcode
+                    className={`w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 ${
+                      isLight ? 'text-amber-600' : 'text-cyan-400'
+                    }`}
+                  />
+                  <input
+                    ref={directBarcodeInputRef}
+                    type="text"
+                    value={barcodeInput}
+                    onChange={(e) => setBarcodeInput(e.target.value)}
+                    placeholder="Scanner code-barres (Douchette USB / code)..."
+                    className={`w-full pl-8 pr-16 py-1 text-xs font-mono rounded-lg border transition-all focus:outline-hidden ${
+                      isLight
+                        ? 'bg-amber-50/50 border-amber-300 text-slate-900 placeholder-slate-400 focus:border-amber-500 focus:bg-white'
+                        : 'bg-[#060812] border-cyan-500/40 text-cyan-200 placeholder-neutral-500 focus:border-cyan-400'
+                    }`}
+                  />
+                  <button
+                    type="submit"
+                    className={`absolute right-1 top-1/2 -translate-y-1/2 px-2 py-0.5 text-[10px] font-bold rounded transition-colors cursor-pointer ${
+                      isLight
+                        ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                        : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950'
+                    }`}
+                  >
+                    Scanner
+                  </button>
+                </form>
+
+                {/* Bouton Scanner Caméra en Caisse Rapide */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCameraScanPurpose('sale');
+                    setShowCameraScannerModal(true);
+                  }}
+                  className={`h-7 px-2.5 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 border transition-all cursor-pointer whitespace-nowrap active:scale-95 shadow-2xs shrink-0 ${
+                    isLight
+                      ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600'
+                      : 'bg-cyan-500 hover:bg-cyan-400 text-neutral-950 border-cyan-400 shadow-[0_0_8px_rgba(0,242,254,0.3)]'
+                  }`}
+                  title="Scanner en rafale avec la caméra pour ajouter directement au ticket [F3]"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Caméra [F3]</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCameraScanPurpose('register');
+                    setShowCameraScannerModal(true);
+                  }}
+                  className={`h-7 px-2 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 border transition-all cursor-pointer whitespace-nowrap active:scale-95 shrink-0 ${
+                    isLight
+                      ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+                      : 'bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 border-emerald-500/40'
+                  }`}
+                  title="Scanner un nouveau code-barres pour l'enregistrer au catalogue et l'ajouter au ticket"
+                >
+                  <PackagePlus className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Nouveau</span>
+                </button>
+              </div>
+
+              {/* Quick Scan Feedback Strip inside Caisse Rapide */}
+              {quickBarcodeNotice && (
+                <div
+                  className={`px-2.5 py-1 rounded-lg border text-[11px] flex items-center justify-between gap-2 ${
+                    quickUnknownBarcode
+                      ? isLight
+                        ? 'bg-amber-50 border-amber-300 text-amber-900'
+                        : 'bg-amber-950/40 border-amber-500/40 text-amber-200'
+                      : isLight
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                      : 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 truncate">
+                    <ScanLine className="w-3.5 h-3.5 shrink-0" />
+                    <span className="font-mono font-semibold truncate">{quickBarcodeNotice}</span>
+                  </div>
+                  {quickUnknownBarcode && (
+                    <button
+                      type="button"
+                      onClick={() => setBarcodeToCreate(quickUnknownBarcode)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 ${
+                        isLight
+                          ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                          : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950'
+                      }`}
+                    >
+                      <PackagePlus className="w-3 h-3" />
+                      <span>Créer l&apos;article</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center gap-1.5">
                 {/* Libellé input avec raccourci F2 */}
                 <div className="flex-1 min-w-[140px] relative">
@@ -1403,21 +1542,6 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 >
                   <Plus className="w-3 h-3 stroke-[3]" />
                   <span>Ajouter [+]</span>
-                </button>
-
-                {/* Bouton Scanner Caméra en Caisse Rapide */}
-                <button
-                  type="button"
-                  onClick={() => setShowCameraScannerModal(true)}
-                  className={`h-7 px-2 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 border transition-all cursor-pointer whitespace-nowrap active:scale-95 shadow-2xs shrink-0 ${
-                    isLight
-                      ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
-                      : 'bg-[#121833] hover:bg-[#1a2245] text-cyan-300 border-cyan-500/40 shadow-[0_0_8px_rgba(0,242,254,0.2)]'
-                  }`}
-                  title="Scanner le code-barres de l'article avec la caméra [F3]"
-                >
-                  <Camera className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Scan [F3]</span>
                 </button>
               </div>
 
@@ -1889,9 +2013,19 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                         >
                           {idx + 1}
                         </span>
-                        <span className={`font-semibold truncate max-w-[140px] ${isLight ? 'text-slate-800' : 'text-neutral-200'}`}>
-                          {item.label}
-                        </span>
+                        <div className="min-w-0">
+                          <span className={`font-semibold truncate block max-w-[145px] ${isLight ? 'text-slate-800' : 'text-neutral-200'}`}>
+                            {item.label}
+                          </span>
+                          {item.barcode && (
+                            <span className={`text-[9px] font-mono inline-flex items-center gap-0.5 ${
+                              isLight ? 'text-amber-700' : 'text-cyan-400/80'
+                            }`}>
+                              <Barcode className="w-2.5 h-2.5" />
+                              {item.barcode}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
@@ -2807,9 +2941,11 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   label: created.name,
                   amount: created.salePrice,
                   quantity: 1,
+                  productId: created.id,
+                  barcode: created.barcode || created.code,
+                  maxStock: created.stock,
                 },
               ]);
-              setDirectLabel(created.name);
             }
           }
 

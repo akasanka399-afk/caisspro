@@ -259,7 +259,7 @@ service cloud.firestore {
       allow get: if isValidId(businessId);
       allow list: if isSignedIn()
         || resource.data.accessCode is string
-        || resource.data.subscriptionStatus in ['active', 'trial', 'suspended'];
+        || resource.data.subscriptionStatus in ['active', 'trial', 'suspended', 'expired'];
       allow create, update: if isValidId(businessId)
         && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 120
         && request.resource.data.tradeType is string
