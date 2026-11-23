@@ -325,9 +325,17 @@ service cloud.firestore {
       allow create: if isValidId(transactionId)
         && request.resource.data.totalAmount is number && request.resource.data.totalAmount >= 0
         && request.resource.data.ticketNumber is string && request.resource.data.ticketNumber.size() <= 50
-        && request.resource.data.paymentMethod in ['cash', 'mobile_money', 'card', 'credit'];
+        && request.resource.data.paymentMethod in ['cash', 'mobile_money', 'card', 'credit']
+        && (!('cancellationReason' in request.resource.data) || (request.resource.data.cancellationReason is string && request.resource.data.cancellationReason.size() <= 300))
+        && (!('cancelledBy' in request.resource.data) || (request.resource.data.cancelledBy is string && request.resource.data.cancelledBy.size() <= 100))
+        && (!('cancelledById' in request.resource.data) || (request.resource.data.cancelledById is string && request.resource.data.cancelledById.size() <= 128))
+        && (!('cancelledAt' in request.resource.data) || (request.resource.data.cancelledAt is string && request.resource.data.cancelledAt.size() <= 40));
       allow update: if isValidId(transactionId)
-        && request.resource.data.status in ['completed', 'refunded', 'cancelled'];
+        && request.resource.data.status in ['completed', 'refunded', 'cancelled']
+        && (!('cancellationReason' in request.resource.data) || (request.resource.data.cancellationReason is string && request.resource.data.cancellationReason.size() <= 300))
+        && (!('cancelledBy' in request.resource.data) || (request.resource.data.cancelledBy is string && request.resource.data.cancelledBy.size() <= 100))
+        && (!('cancelledById' in request.resource.data) || (request.resource.data.cancelledById is string && request.resource.data.cancelledById.size() <= 128))
+        && (!('cancelledAt' in request.resource.data) || (request.resource.data.cancelledAt is string && request.resource.data.cancelledAt.size() <= 40));
       allow delete: if isSignedIn() && isSuperAdmin();
     }
 

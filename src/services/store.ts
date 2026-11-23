@@ -2139,6 +2139,14 @@ class StoreService {
     cashierUser: User;
     restoreStock?: boolean;
   }): { success: boolean; transaction?: SaleTransaction; error?: string } {
+    const cleanReason = (data.reason || '').trim().slice(0, 280);
+    if (cleanReason.length < 3) {
+      return {
+        success: false,
+        error: 'Veuillez saisir une justification valide (minimum 3 caractères).',
+      };
+    }
+
     const txs = this.getTransactions();
     const tx = txs.find((t) => t.id === data.transactionId);
     if (!tx) {
@@ -2152,13 +2160,14 @@ class StoreService {
     const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
     tx.status = 'cancelled';
     tx.cancelledAt = nowStr;
-    tx.cancelledBy = data.cashierUser.name;
-    tx.cancellationReason = data.reason;
+    tx.cancelledBy = data.cashierUser.name.slice(0, 100);
+    tx.cancelledById = data.cashierUser.id.slice(0, 128);
+    tx.cancellationReason = cleanReason;
 
     localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(txs));
     syncDocToFirestore('transactions', tx.id, tx);
 
-    // Restore stock if requested
+    // Restore stock if requested and sync each updated product to Firestore
     if (data.restoreStock !== false) {
       const products = this.getProducts();
       tx.items.forEach((it) => {
@@ -2166,6 +2175,7 @@ class StoreService {
         if (prod) {
           const prev = prod.stock;
           prod.stock += it.quantity;
+          syncDocToFirestore('products', prod.id, prod);
           this.addStockMovement({
             businessId: tx.businessId,
             productId: prod.id,
@@ -2174,12 +2184,21 @@ class StoreService {
             quantity: it.quantity,
             previousStock: prev,
             newStock: prod.stock,
-            reason: `Annulation vente ticket ${tx.ticketNumber} (${data.reason})`,
+            reason: `Annulation vente ${tx.ticketNumber} (${cleanReason.slice(0, 140)})`,
             userName: data.cashierUser.name,
           });
         }
       });
       localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+    }
+
+    // Update business total sales count
+    const businesses = this.getBusinesses();
+    const biz = businesses.find((b) => b.id === tx.businessId);
+    if (biz && biz.totalSalesCount > 0) {
+      biz.totalSalesCount = Math.max(0, biz.totalSalesCount - 1);
+      localStorage.setItem(STORAGE_KEYS.BUSINESSES, JSON.stringify(businesses));
+      syncDocToFirestore('businesses', biz.id, biz);
     }
 
     // If credit sale, reverse the customer debt
@@ -2194,12 +2213,17 @@ class StoreService {
       }
     }
 
-    // If cash sale, adjust active session expectedCash
-    if (tx.paymentMethod === 'cash') {
-      const activeSession = this.getActiveCashSession(tx.businessId);
-      if (activeSession) {
-        activeSession.expectedCash = Math.max(0, activeSession.expectedCash - tx.totalAmount);
+    // Adjust active cash session metrics if the cancelled sale occurred in this open session
+    const activeSession = this.getActiveCashSession(tx.businessId);
+    if (activeSession) {
+      const openTime = new Date(activeSession.openedAt.replace(' ', 'T')).getTime();
+      const txTime = new Date(tx.timestamp.replace(' ', 'T')).getTime();
+      if (txTime >= openTime) {
         activeSession.totalSalesAmount = Math.max(0, activeSession.totalSalesAmount - tx.totalAmount);
+        activeSession.totalSalesCount = Math.max(0, activeSession.totalSalesCount - 1);
+        if (tx.paymentMethod === 'cash') {
+          activeSession.expectedCash = Math.max(0, activeSession.expectedCash - tx.totalAmount);
+        }
         this.updateCashSession(activeSession);
       }
     }
@@ -2209,7 +2233,7 @@ class StoreService {
       targetRole: 'owner',
       businessId: tx.businessId,
       title: `Vente annulée : ${tx.ticketNumber}`,
-      message: `La vente de ${tx.totalAmount} F CFA (Ticket ${tx.ticketNumber}) a été annulée par ${data.cashierUser.name}. Motif: ${data.reason}`,
+      message: `La vente de ${tx.totalAmount} F CFA (Ticket ${tx.ticketNumber}) a été annulée par ${data.cashierUser.name}. Motif : ${cleanReason}`,
       type: 'security',
       priority: 'high',
     });

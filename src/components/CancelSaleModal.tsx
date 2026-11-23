@@ -44,12 +44,24 @@ export const CancelSaleModal: React.FC<CancelSaleModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const finalReason = customReason.trim()
+  const isCustomOnly = selectedPreset === 'Autre motif justifié';
+  const finalReason = isCustomOnly
+    ? customReason.trim()
+    : customReason.trim()
     ? `${selectedPreset} : ${customReason.trim()}`
     : selectedPreset;
 
+  const isJustificationValid = isCustomOnly
+    ? customReason.trim().length >= 5
+    : finalReason.trim().length >= 3;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (isCustomOnly && customReason.trim().length < 5) {
+      setErrorMsg('Veuillez saisir une justification détaillée (au moins 5 caractères) pour le motif personnalisé.');
+      return;
+    }
 
     if (!finalReason.trim()) {
       setErrorMsg('Veuillez fournir une justification pour l’annulation.');
@@ -61,7 +73,7 @@ export const CancelSaleModal: React.FC<CancelSaleModalProps> = ({
 
     const res = store.cancelTransaction({
       transactionId: transaction.id,
-      reason: finalReason.trim(),
+      reason: finalReason.trim().slice(0, 280),
       cashierUser: currentUser,
       restoreStock,
     });
@@ -85,7 +97,7 @@ export const CancelSaleModal: React.FC<CancelSaleModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/80 backdrop-blur-xs overflow-y-auto">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 md:p-6 bg-black/80 backdrop-blur-xs overflow-y-auto">
       <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-[#0c0f1d] border border-rose-300 dark:border-rose-500/40 shadow-2xl text-slate-900 dark:text-white overflow-hidden my-auto flex flex-col">
         {/* Header */}
         <div className="p-4 md:p-5 border-b border-rose-200 dark:border-rose-500/20 bg-rose-50/60 dark:bg-rose-950/30 flex items-center justify-between">
@@ -193,12 +205,29 @@ export const CancelSaleModal: React.FC<CancelSaleModalProps> = ({
           {/* Detailed Justification Input */}
           <div className="space-y-1.5">
             <label className="block text-xs font-bold text-slate-700 dark:text-neutral-300">
-              Détails / Précisions complémentaires <span className="text-slate-400 font-normal">(Recommandé)</span>
+              {isCustomOnly ? (
+                <>
+                  Justification détaillée <span className="text-rose-500">* (Obligatoire)</span>
+                </>
+              ) : (
+                <>
+                  Détails / Précisions complémentaires <span className="text-slate-400 font-normal">(Recommandé)</span>
+                </>
+              )}
             </label>
             <textarea
               value={customReason}
-              onChange={(e) => setCustomReason(e.target.value)}
-              placeholder="Ex: Le client n'avait pas le bon code Wave et est parti sans la marchandise..."
+              onChange={(e) => {
+                setCustomReason(e.target.value);
+                if (errorMsg) setErrorMsg(null);
+              }}
+              maxLength={220}
+              required={isCustomOnly}
+              placeholder={
+                isCustomOnly
+                  ? 'Expliquez précisément la raison de cette annulation (ex : double encaissement, erreur produit...)'
+                  : "Ex: Le client n'avait pas le bon code Wave et est parti sans la marchandise..."
+              }
               rows={2}
               className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-xs focus:ring-2 focus:ring-rose-500 outline-hidden transition-all"
             />
@@ -226,7 +255,7 @@ export const CancelSaleModal: React.FC<CancelSaleModalProps> = ({
           <div className="p-3 rounded-xl bg-slate-100 dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 text-[11px] text-slate-600 dark:text-neutral-400 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
             <span>
-              Cette annulation est définitive. Le ticket sera marqué comme <strong>ANNULÉ</strong>, retiré du chiffre d'affaires et consigné avec votre nom d'agent dans le journal de sécurité.
+              Cette annulation est définitive. Le ticket sera marqué comme <strong>ANNULÉ</strong>, retiré du chiffre d'affaires et consigné dans l'historique avec l'horodatage et votre identifiant caissier (<strong>{currentUser.name}</strong> · <span className="font-mono">{currentUser.id}</span>).
             </span>
           </div>
 
@@ -236,15 +265,15 @@ export const CancelSaleModal: React.FC<CancelSaleModalProps> = ({
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="px-4 py-2 text-xs font-bold rounded-xl border border-slate-300 dark:border-neutral-700 hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+              className="px-4 py-2 text-xs font-bold rounded-xl border border-slate-300 dark:border-neutral-700 hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer whitespace-nowrap"
             >
               Conserver la Vente
             </button>
 
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="px-5 py-2 text-xs font-black rounded-xl bg-rose-600 hover:bg-rose-700 text-white transition-all shadow-md shadow-rose-600/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              disabled={isSubmitting || !isJustificationValid}
+              className="px-5 py-2 text-xs font-black rounded-xl bg-rose-600 hover:bg-rose-700 text-white transition-all shadow-md shadow-rose-600/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>{isSubmitting ? 'Annulation en cours...' : 'Confirmer l’Annulation'}</span>

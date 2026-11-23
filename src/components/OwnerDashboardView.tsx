@@ -36,10 +36,13 @@ import {
   Award,
   BarChart3,
   Printer,
+  RotateCcw,
 } from 'lucide-react';
 import { ReceiptModal } from './ReceiptModal';
 import { WeeklyReportModal } from './WeeklyReportModal';
 import { ZReportModal } from './ZReportModal';
+import { CancelSaleModal } from './CancelSaleModal';
+import { RecentSalesModal } from './RecentSalesModal';
 
 interface OwnerDashboardViewProps {
   currentUser: User;
@@ -57,7 +60,10 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
   const [users, setUsers] = useState<User[]>([]);
   const [sessions, setSessions] = useState<CashRegisterSession[]>([]);
   const [selectedTxForReceipt, setSelectedTxForReceipt] = useState<SaleTransaction | null>(null);
+  const [selectedTxForCancel, setSelectedTxForCancel] = useState<SaleTransaction | null>(null);
+  const [showRecentSalesModal, setShowRecentSalesModal] = useState<boolean>(false);
   const [selectedSessionForZ, setSelectedSessionForZ] = useState<CashRegisterSession | null>(null);
+  const [dashboardNotice, setDashboardNotice] = useState<string | null>(null);
 
   // Edit Business modal state
   const [showEditBizModal, setShowEditBizModal] = useState<boolean>(false);
@@ -102,12 +108,17 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
   const [showWeeklyReportModal, setShowWeeklyReportModal] = useState<boolean>(false);
   const [selectedWeekOffset, setSelectedWeekOffset] = useState<number>(0);
 
-  // Financial calculations
+  // Financial calculations (exclude cancelled sales)
+  const activeTransactions = useMemo(
+    () => transactions.filter((t) => t.status !== 'cancelled'),
+    [transactions]
+  );
+
   const todayDateStr = new Date().toISOString().slice(0, 10);
   const currentMonthStr = todayDateStr.slice(0, 7);
 
   // Daily CA (today)
-  const todayTransactions = transactions.filter((t) => t.timestamp.startsWith(todayDateStr));
+  const todayTransactions = activeTransactions.filter((t) => t.timestamp.startsWith(todayDateStr));
   const dailyRevenue = todayTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
 
   // Strict ISO Monday-to-Sunday Weekly CA calculation
@@ -118,12 +129,12 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
   const currentWeekTransactions = useMemo(() => {
     const mondayStart = currentWeekRange.monday.getTime();
     const sundayEnd = currentWeekRange.sunday.getTime();
-    return transactions.filter((t) => {
+    return activeTransactions.filter((t) => {
       if (t.businessId !== business.id) return false;
       const tTime = new Date(t.timestamp.replace(' ', 'T')).getTime();
       return tTime >= mondayStart && tTime <= sundayEnd;
     });
-  }, [transactions, business.id, currentWeekRange]);
+  }, [activeTransactions, business.id, currentWeekRange]);
 
   const weeklyRevenueStrict = useMemo(() => {
     return currentWeekTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
@@ -155,14 +166,14 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
   }, [weekDaysChart]);
 
   // Monthly CA (this month)
-  const monthlyTransactions = transactions.filter((t) => t.timestamp.startsWith(currentMonthStr));
+  const monthlyTransactions = activeTransactions.filter((t) => t.timestamp.startsWith(currentMonthStr));
   const monthlyRevenue = monthlyTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
 
   // Sales counter & stats
-  const totalSalesCount = business.totalSalesCount || transactions.length;
+  const totalSalesCount = activeTransactions.length;
 
   // Average basket
-  const avgBasket = transactions.length > 0 ? Math.round(monthlyRevenue / (monthlyTransactions.length || 1)) : 0;
+  const avgBasket = monthlyTransactions.length > 0 ? Math.round(monthlyRevenue / monthlyTransactions.length) : 0;
 
   // Add User handler
   const handleCreateUser = (e: React.FormEvent) => {
@@ -184,7 +195,8 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
     setNewUserEmail('');
     setNewUserPhone('');
     setNewUserPin('1234');
-    alert(`Compte ${newUserRole === 'manager' ? 'Gérant' : 'Caissier'} créé avec succès.`);
+    setDashboardNotice(`Compte ${newUserRole === 'manager' ? 'Gérant' : 'Caissier'} créé avec succès.`);
+    setTimeout(() => setDashboardNotice(null), 4000);
   };
 
   // Toggle user status
@@ -198,9 +210,11 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
     e.preventDefault();
     if (!resetUserTarget || !resetPinValue.trim()) return;
     store.resetUserPassword(resetUserTarget.id, resetPinValue.trim());
+    const targetName = resetUserTarget.name;
     setResetUserTarget(null);
     setResetPinValue('');
-    alert(`Code PIN mis à jour avec succès pour ${resetUserTarget.name}.`);
+    setDashboardNotice(`Code PIN mis à jour avec succès pour ${targetName}.`);
+    setTimeout(() => setDashboardNotice(null), 4000);
   };
 
   // Open Edit Business modal pre-filled
@@ -935,16 +949,46 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
       <div className={`rounded-xl border overflow-hidden ${
         isLight ? 'bg-white border-slate-200 shadow-xs' : 'bg-[#0a0d1e] border-cyan-500/25'
       }`}>
-        <div className={`px-5 py-4 border-b flex items-center justify-between ${
+        {dashboardNotice && (
+          <div className="px-5 py-2.5 bg-emerald-50 dark:bg-emerald-950/40 border-b border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs font-semibold flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{dashboardNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDashboardNotice(null)}
+              className="opacity-70 hover:opacity-100 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        <div className={`px-5 py-4 border-b flex flex-wrap items-center justify-between gap-2 ${
           isLight ? 'bg-slate-50 border-slate-200' : 'bg-[#060814] border-cyan-500/20'
         }`}>
           <div className="flex items-center gap-2">
             <Receipt className={`w-4 h-4 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
             <h3 className="text-sm font-bold">Journal des Ventes en Temps Réel</h3>
           </div>
-          <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
-            {transactions.length} ventes archivées
-          </span>
+          <div className="flex items-center gap-3">
+            <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+              {activeTransactions.length} validée(s) · {transactions.length - activeTransactions.length} annulée(s)
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowRecentSalesModal(true)}
+              className={`px-2.5 py-1 text-xs font-bold rounded-lg border flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                isLight
+                  ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                  : 'bg-rose-950/30 hover:bg-rose-950/50 text-rose-300 border-rose-500/30'
+              }`}
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Historique & Annulations</span>
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto max-h-72 overflow-y-auto">
@@ -957,63 +1001,120 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
                 <th className="px-4 py-2.5 font-semibold">Horodatage</th>
                 <th className="px-4 py-2.5 font-semibold">Caissier</th>
                 <th className="px-4 py-2.5 font-semibold">Client</th>
-                <th className="px-4 py-2.5 font-semibold">Règlement</th>
+                <th className="px-4 py-2.5 font-semibold">Règlement / Statut</th>
                 <th className="px-4 py-2.5 font-semibold text-center">Articles</th>
                 <th className="px-4 py-2.5 font-semibold text-right">Montant Total</th>
-                <th className="px-4 py-2.5 font-semibold text-center">Ticket</th>
+                <th className="px-4 py-2.5 font-semibold text-right">Actions</th>
               </tr>
             </thead>
             <tbody className={`divide-y ${isLight ? 'divide-slate-100' : 'divide-neutral-800/80'}`}>
-              {transactions.slice(0, 10).map((tx) => (
-                <tr key={tx.id} className={isLight ? 'hover:bg-slate-50/80 transition-colors' : 'hover:bg-[#0f142b] transition-colors'}>
-                  <td className={`px-4 py-2.5 font-mono font-bold ${isLight ? 'text-amber-700' : 'text-cyan-300'}`}>
-                    {tx.ticketNumber}
-                  </td>
-                  <td className={`px-4 py-2.5 font-mono ${isLight ? 'text-slate-500' : 'text-neutral-300'}`}>
-                    {formatDate(tx.timestamp)}
-                  </td>
-                  <td className="px-4 py-2.5 font-semibold">{tx.cashierName}</td>
-                  <td className={`px-4 py-2.5 ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
-                    {tx.customerName || 'Client passage'}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className={`px-2 py-0.5 rounded font-mono text-[10px] border ${
-                      isLight
-                        ? 'bg-slate-100 text-slate-700 border-slate-200'
-                        : 'bg-[#060812] text-neutral-300 border-neutral-800'
+              {transactions.slice(0, 12).map((tx) => {
+                const isCancelled = tx.status === 'cancelled';
+                return (
+                  <tr
+                    key={tx.id}
+                    className={
+                      isCancelled
+                        ? isLight
+                          ? 'bg-rose-50/40'
+                          : 'bg-rose-950/15'
+                        : isLight
+                        ? 'hover:bg-slate-50/80 transition-colors'
+                        : 'hover:bg-[#0f142b] transition-colors'
+                    }
+                  >
+                    <td className={`px-4 py-2.5 font-mono font-bold ${
+                      isCancelled ? 'line-through text-slate-400' : isLight ? 'text-amber-700' : 'text-cyan-300'
                     }`}>
-                      {tx.paymentMethod === 'cash'
-                        ? 'Espèces'
-                        : tx.paymentMethod === 'mobile_money'
-                        ? 'Wave / OM'
-                        : tx.paymentMethod === 'card'
-                        ? 'Carte'
-                        : 'Crédit'}
-                    </span>
-                  </td>
-                  <td className={`px-4 py-2.5 text-center font-mono font-bold ${
-                    isLight ? 'text-slate-700' : 'text-neutral-300'
-                  }`}>
-                    {tx.items.reduce((s, it) => s + it.quantity, 0)} art.
-                  </td>
-                  <td className={`px-4 py-2.5 text-right font-mono font-bold ${
-                    isLight ? 'text-emerald-700' : 'text-emerald-400'
-                  }`}>
-                    {formatMoney(tx.totalAmount)}
-                  </td>
-                  <td className="px-4 py-2.5 text-center">
-                    <button
-                      onClick={() => setSelectedTxForReceipt(tx)}
-                      className={`p-1.5 rounded transition-colors ${
-                        isLight ? 'text-slate-500 hover:bg-slate-100' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
-                      }`}
-                      title="Afficher et réimprimer ticket"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                      {tx.ticketNumber}
+                    </td>
+                    <td className={`px-4 py-2.5 font-mono ${isLight ? 'text-slate-500' : 'text-neutral-300'}`}>
+                      {formatDate(tx.timestamp)}
+                    </td>
+                    <td className="px-4 py-2.5 font-semibold">{tx.cashierName}</td>
+                    <td className={`px-4 py-2.5 ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                      <div>{tx.customerName || 'Client passage'}</div>
+                      {isCancelled && (
+                        <div className="text-[10px] text-rose-600 dark:text-rose-400 space-y-0.5 mt-0.5">
+                          {tx.cancellationReason && (
+                            <div className="italic truncate max-w-[220px]" title={tx.cancellationReason}>
+                              Motif : {tx.cancellationReason}
+                            </div>
+                          )}
+                          <div className="font-mono text-[9px] opacity-85">
+                            {tx.cancelledAt || tx.timestamp} · {tx.cancelledBy || tx.cashierName} ({tx.cancelledById || tx.cashierId})
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`px-2 py-0.5 rounded font-mono text-[10px] border ${
+                          isLight
+                            ? 'bg-slate-100 text-slate-700 border-slate-200'
+                            : 'bg-[#060812] text-neutral-300 border-neutral-800'
+                        }`}>
+                          {tx.paymentMethod === 'cash'
+                            ? 'Espèces'
+                            : tx.paymentMethod === 'mobile_money'
+                            ? 'Wave / OM'
+                            : tx.paymentMethod === 'card'
+                            ? 'Carte'
+                            : 'Crédit'}
+                        </span>
+                        {isCancelled && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500 text-white uppercase">
+                            Annulée
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className={`px-4 py-2.5 text-center font-mono font-bold ${
+                      isLight ? 'text-slate-700' : 'text-neutral-300'
+                    }`}>
+                      {tx.items.reduce((s, it) => s + it.quantity, 0)} art.
+                    </td>
+                    <td className={`px-4 py-2.5 text-right font-mono font-bold tabular-nums ${
+                      isCancelled
+                        ? 'line-through text-rose-500'
+                        : isLight
+                        ? 'text-emerald-700'
+                        : 'text-emerald-400'
+                    }`}>
+                      {formatMoney(tx.totalAmount)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTxForReceipt(tx)}
+                          className={`p-1.5 rounded transition-colors cursor-pointer ${
+                            isLight ? 'text-slate-500 hover:bg-slate-100' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+                          }`}
+                          title="Afficher et réimprimer ticket"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        {!isCancelled && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTxForCancel(tx)}
+                            className={`px-2 py-1 rounded text-[11px] font-bold flex items-center gap-1 border transition-colors cursor-pointer whitespace-nowrap ${
+                              isLight
+                                ? 'bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border-rose-200'
+                                : 'bg-rose-950/40 hover:bg-rose-600 text-rose-300 hover:text-white border-rose-800'
+                            }`}
+                            title="Annuler cette vente avec justification"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            <span>Annuler</span>
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1592,6 +1693,40 @@ export const OwnerDashboardView: React.FC<OwnerDashboardViewProps> = ({ currentU
           business={currentBiz}
           isLight={isLight}
           onClose={() => setSelectedSessionForZ(null)}
+        />
+      )}
+
+      {/* Cancel Sale Modal */}
+      {selectedTxForCancel && (
+        <CancelSaleModal
+          transaction={selectedTxForCancel}
+          business={currentBiz}
+          currentUser={currentUser}
+          onClose={() => setSelectedTxForCancel(null)}
+          onSuccess={(cancelledTx) => {
+            setSelectedTxForCancel(null);
+            refreshData();
+            setDashboardNotice(
+              `Vente ${cancelledTx.ticketNumber} annulée (« ${cancelledTx.cancellationReason} »). Chiffre d’affaires et stock ajustés.`
+            );
+            setTimeout(() => setDashboardNotice(null), 5000);
+          }}
+        />
+      )}
+
+      {/* Full Recent Sales & Cancellation Modal */}
+      {showRecentSalesModal && (
+        <RecentSalesModal
+          business={currentBiz}
+          currentUser={currentUser}
+          onClose={() => setShowRecentSalesModal(false)}
+          onSaleCancelled={(cancelledTx) => {
+            refreshData();
+            setDashboardNotice(
+              `Vente ${cancelledTx.ticketNumber} annulée (« ${cancelledTx.cancellationReason} »).`
+            );
+            setTimeout(() => setDashboardNotice(null), 5000);
+          }}
         />
       )}
     </div>

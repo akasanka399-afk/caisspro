@@ -57,6 +57,7 @@ export const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({
 
     return transactions.filter((t) => {
       if (t.businessId !== business.id) return false;
+      if (t.status === 'cancelled') return false;
       const tTime = new Date(t.timestamp.replace(' ', 'T')).getTime();
       return tTime >= mondayStart && tTime <= sundayEnd;
     });

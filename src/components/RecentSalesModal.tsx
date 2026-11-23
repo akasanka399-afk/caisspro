@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Search,
@@ -44,6 +44,14 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
   const refreshList = () => {
     setTransactions(store.getTransactions(business.id));
   };
+
+  useEffect(() => {
+    refreshList();
+    const unsub = store.subscribe(() => {
+      refreshList();
+    });
+    return () => unsub();
+  }, [business.id]);
 
   const filteredTransactions = transactions.filter((tx) => {
     if (statusFilter !== 'all' && tx.status !== statusFilter) {
@@ -298,16 +306,23 @@ export const RecentSalesModal: React.FC<RecentSalesModalProps> = ({
                     </div>
                   </div>
 
-                  {/* If cancelled, show justification banner */}
+                  {/* If cancelled, show justification banner with cashier ID & timestamp */}
                   {isCancelled && (
                     <div className="mt-2.5 p-2.5 rounded-lg bg-rose-100/70 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-xs space-y-1">
-                      <div className="flex items-center gap-1.5 font-bold text-rose-900 dark:text-rose-200">
+                      <div className="flex items-center gap-1.5 font-bold text-rose-900 dark:text-rose-200 flex-wrap">
                         <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                        <span>Justification de l'annulation :</span>
+                        <span>Motif d’annulation :</span>
                         <span className="font-normal italic">« {tx.cancellationReason || 'Non spécifié'} »</span>
                       </div>
-                      <div className="text-[11px] text-rose-700 dark:text-rose-400">
-                        Annulée le {tx.cancelledAt || tx.timestamp} par <strong>{tx.cancelledBy || 'Caissier'}</strong>.
+                      <div className="text-[11px] text-rose-700 dark:text-rose-400 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span>
+                          Horodatage : <strong className="font-mono">{tx.cancelledAt || tx.timestamp}</strong>
+                        </span>
+                        <span>·</span>
+                        <span>
+                          Caissier : <strong>{tx.cancelledBy || tx.cashierName}</strong>{' '}
+                          <span className="font-mono opacity-85">({tx.cancelledById || tx.cashierId})</span>
+                        </span>
                       </div>
                     </div>
                   )}

@@ -204,7 +204,11 @@
         "changeDue": { "type": "number" },
         "developerFee": { "type": "number" },
         "timestamp": { "type": "string" },
-        "status": { "type": "string", "enum": ["completed", "refunded", "cancelled"] }
+        "status": { "type": "string", "enum": ["completed", "refunded", "cancelled"] },
+        "cancelledAt": { "type": "string", "maxLength": 40 },
+        "cancelledBy": { "type": "string", "maxLength": 100 },
+        "cancelledById": { "type": "string", "maxLength": 128 },
+        "cancellationReason": { "type": "string", "maxLength": 300 }
       },
       "required": ["id", "ticketNumber", "businessId", "cashierId", "totalAmount", "paymentMethod", "timestamp", "status"]
     },

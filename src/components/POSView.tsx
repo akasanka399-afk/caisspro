@@ -32,10 +32,14 @@ import {
   Camera,
   ScanLine,
   BookOpen,
+  PackagePlus,
 } from 'lucide-react';
 import { ReceiptModal } from './ReceiptModal';
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
 import { CameraBarcodeScannerModal } from './CameraBarcodeScannerModal';
+import { RecentSalesModal } from './RecentSalesModal';
+import { CancelSaleModal } from './CancelSaleModal';
+import { QuickAddScannedProductModal } from './QuickAddScannedProductModal';
 import { printThermalReceipt } from '../utils/printReceipt';
 
 export const DIRECT_LABEL_PRESETS = [
@@ -103,13 +107,25 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
   const [showCustomerModal, setShowCustomerModal] = useState<boolean>(false);
   const [showCameraScannerModal, setShowCameraScannerModal] = useState<boolean>(false);
+  const [cameraScanPurpose, setCameraScanPurpose] = useState<'sale' | 'register'>('sale');
+  const [showRecentSalesModal, setShowRecentSalesModal] = useState<boolean>(false);
+  const [selectedTxForCancel, setSelectedTxForCancel] = useState<SaleTransaction | null>(null);
+  const [barcodeToCreate, setBarcodeToCreate] = useState<string | null>(null);
   const [quickBarcodeNotice, setQuickBarcodeNotice] = useState<string | null>(null);
+  const [quickUnknownBarcode, setQuickUnknownBarcode] = useState<string | null>(null);
   const [globalNotice, setGlobalNotice] = useState<{
     message: string;
     type: 'success' | 'error' | 'info';
     actionLabel?: string;
     onAction?: () => void;
   } | null>(null);
+
+  const showErrorNotice = (message: string) => {
+    setGlobalNotice({ message, type: 'error' });
+    setTimeout(() => {
+      setGlobalNotice((prev) => (prev?.type === 'error' && prev.message === message ? null : prev));
+    }, 4500);
+  };
 
   // Refs for keyboard navigation & direct typing
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -178,15 +194,13 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   // Handle printing the latest receipt formatted for thermal printers
   const handlePrintTicket = async () => {
     const transactions = store.getTransactions(business.id);
-    const targetTx = completedTx || lastSaleTx || transactions[0];
+    const activeLastSale = lastSaleTx && lastSaleTx.status !== 'cancelled' ? lastSaleTx : null;
+    const latestActive = transactions.find((t) => t.status !== 'cancelled');
+    const targetTx = completedTx || activeLastSale || latestActive || transactions[0];
 
     if (!targetTx) {
       playSoundEffect('error');
-      setGlobalNotice({
-        message: 'Aucun ticket de vente disponible pour ce commerce. Effectuez une vente au préalable.',
-        type: 'error',
-      });
-      setTimeout(() => setGlobalNotice(null), 4000);
+      showErrorNotice('Aucun ticket de vente disponible pour ce commerce. Effectuez une vente au préalable.');
       return;
     }
 
@@ -300,7 +314,13 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         e.preventDefault();
         handlePrintTicket();
       } else if (e.key === 'Escape') {
-        if (showCameraScannerModal) setShowCameraScannerModal(false);
+        if (selectedTxForCancel !== null) setSelectedTxForCancel(null);
+        else if (barcodeToCreate !== null) setBarcodeToCreate(null);
+        else if (showRecentSalesModal) setShowRecentSalesModal(false);
+        else if (showCameraScannerModal) {
+          setShowCameraScannerModal(false);
+          setCameraScanPurpose('sale');
+        }
         else if (showShortcutsModal) setShowShortcutsModal(false);
         else if (showCustomerModal) setShowCustomerModal(false);
         else if (completedTx) setCompletedTx(null);
@@ -382,7 +402,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   const addToCart = (product: Product, qty: number = 1) => {
     if (product.stock <= 0) {
       playSoundEffect('error');
-      alert(`Stock épuisé pour "${product.name}".`);
+      showErrorNotice(`Stock épuisé pour « ${product.name} ».`);
       return;
     }
 
@@ -392,7 +412,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         const newQty = existing.quantity + qty;
         if (newQty > product.stock) {
           playSoundEffect('error');
-          alert(`Quantité demandée (${newQty}) supérieure au stock disponible (${product.stock}).`);
+          showErrorNotice(`Quantité demandée (${newQty}) supérieure au stock disponible (${product.stock}).`);
           return prev;
         }
         return prev.map((item) =>
@@ -426,7 +446,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
             if (nextQty <= 0) return null;
             if (nextQty > item.product.stock) {
               playSoundEffect('error');
-              alert(`Stock maximum disponible atteint (${item.product.stock}).`);
+              showErrorNotice(`Stock maximum disponible atteint (${item.product.stock}).`);
               return item;
             }
             return {
@@ -467,8 +487,29 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         p.barcode?.replace(/\s+/g, '') === cleanCode.replace(/\s+/g, '')
     );
 
+    if (cameraScanPurpose === 'register') {
+      setCameraScanPurpose('sale');
+      if (matched) {
+        playSoundEffect('beep');
+        if (posMode === 'catalog') {
+          addToCart(matched, 1);
+        }
+        setGlobalNotice({
+          message: `Cet article existe déjà au catalogue : « ${matched.name} » (${formatMoney(matched.salePrice)}).`,
+          type: 'info',
+        });
+        setTimeout(() => setGlobalNotice(null), 4000);
+        return { success: true, product: matched };
+      } else {
+        playSoundEffect('beep');
+        setBarcodeToCreate(cleanCode);
+        return { success: false, error: `Nouveau code ${cleanCode} prêt à enregistrer` };
+      }
+    }
+
     if (matched) {
       playSoundEffect('beep');
+      setQuickUnknownBarcode(null);
 
       if (posMode === 'catalog') {
         addToCart(matched, 1);
@@ -505,13 +546,26 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       return { success: true, product: matched };
     } else {
       playSoundEffect('error');
+      setQuickUnknownBarcode(cleanCode);
       if (posMode === 'direct') {
         setDirectLabel(`Article #${cleanCode}`);
-        setQuickBarcodeNotice(`Code-barres ${cleanCode} non trouvé au catalogue. Saisissez son prix.`);
+        setQuickBarcodeNotice(`Code-barres ${cleanCode} non trouvé au catalogue.`);
       } else {
         setQuickBarcodeNotice(`Code-barres ${cleanCode} introuvable dans le catalogue.`);
       }
-      setTimeout(() => setQuickBarcodeNotice(null), 3500);
+      setGlobalNotice({
+        message: `Code-barres ${cleanCode} introuvable dans le catalogue.`,
+        type: 'info',
+        actionLabel: `Créer l’article (${cleanCode})`,
+        onAction: () => {
+          setGlobalNotice(null);
+          setBarcodeToCreate(cleanCode);
+        },
+      });
+      setTimeout(() => {
+        setQuickBarcodeNotice(null);
+        setQuickUnknownBarcode(null);
+      }, 6000);
       return { success: false, error: `Code ${cleanCode} non répertorié` };
     }
   };
@@ -530,6 +584,10 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (showCameraScannerModal || showRecentSalesModal || selectedTxForCancel !== null || barcodeToCreate !== null) {
+        return;
+      }
+
       const activeEl = document.activeElement as HTMLElement | null;
       const isInput = ['INPUT', 'TEXTAREA'].includes(activeEl?.tagName || '');
 
@@ -565,7 +623,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
     window.addEventListener('keydown', handleGlobalKeyDown, true);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
-  }, [products, posMode]);
+  }, [products, posMode, showCameraScannerModal, showRecentSalesModal, selectedTxForCancel, barcodeToCreate, cameraScanPurpose]);
 
   // Mode Catalogue: Validate sale (supporte la validation avec ou sans impression de ticket)
   const handleValidateSale = (shouldPrint: boolean = false) => {
@@ -578,13 +636,13 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       const rec = parseFloat(amountReceived) || 0;
       if (rec < cartTotal) {
         playSoundEffect('error');
-        alert(`Montant reçu (${rec} F) insuffisant pour couvrir le total de ${cartTotal} F CFA.`);
+        showErrorNotice(`Montant reçu (${rec} F) insuffisant pour couvrir le total de ${cartTotal} F CFA.`);
         return;
       }
     } else if (paymentMethod === 'credit') {
       if (!selectedCustomerId) {
         playSoundEffect('error');
-        alert('Vente à crédit : Veuillez sélectionner ou créer le client (touche F4) pour porter cette dette au carnet.');
+        showErrorNotice('Vente à crédit : sélectionnez ou créez le client (touche F4) pour porter cette dette au carnet.');
         setShowCustomerModal(true);
         return;
       }
@@ -645,7 +703,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   const handleAddDirectItem = () => {
     if (numDirectAmount <= 0) {
       playSoundEffect('error');
-      alert('Veuillez saisir un montant supérieur à 0 F.');
+      showErrorNotice('Veuillez saisir un montant supérieur à 0 F.');
       directInputRef.current?.focus();
       return;
     }
@@ -778,7 +836,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
     if (itemsToSale.length === 0) {
       playSoundEffect('error');
-      alert('Veuillez saisir au moins un montant pour enregistrer la vente.');
+      showErrorNotice('Veuillez saisir au moins un montant pour enregistrer la vente.');
       directInputRef.current?.focus();
       return;
     }
@@ -789,7 +847,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       const rec = numDirectReceived || totalToPay;
       if (rec < totalToPay) {
         playSoundEffect('error');
-        alert(`Montant remis (${rec} F) insuffisant pour régler ${totalToPay} F CFA.`);
+        showErrorNotice(`Montant remis (${rec} F) insuffisant pour régler ${totalToPay} F CFA.`);
         return;
       }
     } else if (directPaymentMethod === 'credit') {
@@ -797,7 +855,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       const targetName = existingCustomer?.name || directCustomerName.trim();
       if (!targetName) {
         playSoundEffect('error');
-        alert('Vente à crédit : Veuillez indiquer le nom du client (ou sélectionner dans le répertoire [F4]) pour porter la dette au carnet.');
+        showErrorNotice('Vente à crédit : indiquez le nom du client (ou sélectionnez dans le répertoire [F4]).');
         return;
       }
     }
@@ -985,8 +1043,22 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
           <button
             type="button"
+            onClick={() => setShowRecentSalesModal(true)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 cursor-pointer ${
+              isLight
+                ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200 shadow-2xs'
+                : 'bg-rose-950/30 hover:bg-rose-950/50 text-rose-300 border-rose-500/30'
+            }`}
+            title="Consulter les ventes récentes et annuler un ticket avec justification"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Historique / Annuler</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handlePrintTicket}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border ${
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 ${
               isLight
                 ? 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-2xs'
                 : 'bg-[#0e1428] hover:bg-[#141b36] text-cyan-300 border-cyan-500/40 shadow-[0_0_10px_rgba(0,242,254,0.15)]'
@@ -1000,7 +1072,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
           <button
             onClick={() => setShowShortcutsModal(true)}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border ${
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border whitespace-nowrap shrink-0 ${
               isLight
                 ? 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
                 : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border-neutral-700'
@@ -1040,13 +1112,17 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               <button
                 type="button"
                 onClick={globalNotice.onAction}
-                className={`ml-2 px-2.5 py-0.5 rounded text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                className={`ml-2 px-2.5 py-0.5 rounded text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1 whitespace-nowrap ${
                   isLight
                     ? 'bg-white hover:bg-slate-100 text-slate-800 border-slate-300 shadow-2xs'
                     : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/40'
                 }`}
               >
-                <Printer className="w-3 h-3" />
+                {globalNotice.actionLabel.includes('Créer') ? (
+                  <PackagePlus className="w-3 h-3" />
+                ) : (
+                  <Printer className="w-3 h-3" />
+                )}
                 <span>{globalNotice.actionLabel}</span>
               </button>
             )}
@@ -1966,15 +2042,30 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 <span className={`font-bold uppercase tracking-wider ${isLight ? 'text-slate-900' : 'text-white'}`}>
                   Dernières Ventes Caissier
                 </span>
-                <span
-                  className={`text-[9px] font-mono px-1.5 py-0.2 rounded border ${
-                    isLight
-                      ? 'bg-slate-100 text-slate-700 border-slate-300'
-                      : 'bg-neutral-800 text-neutral-300 border-neutral-700'
-                  }`}
-                >
-                  {recentTransactions.length} vente{recentTransactions.length > 1 ? 's' : ''}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowRecentSalesModal(true)}
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded border flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
+                      isLight
+                        ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                        : 'bg-rose-950/30 hover:bg-rose-950/50 text-rose-300 border-rose-500/30'
+                    }`}
+                    title="Annuler une vente ou consulter l'historique complet"
+                  >
+                    <RotateCcw className="w-2.5 h-2.5" />
+                    <span>Annuler / Tout</span>
+                  </button>
+                  <span
+                    className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+                      isLight
+                        ? 'bg-slate-100 text-slate-700 border-slate-300'
+                        : 'bg-neutral-800 text-neutral-300 border-neutral-700'
+                    }`}
+                  >
+                    {recentTransactions.length}
+                  </span>
+                </div>
               </div>
 
               <div className="space-y-1 overflow-y-auto mt-1 pr-0.5">
@@ -1983,52 +2074,86 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                     Aucune vente pour le moment.
                   </p>
                 ) : (
-                  recentTransactions.slice(0, 3).map((tx) => (
-                    <div
-                      key={tx.id}
-                      onClick={() => setCompletedTx(tx)}
-                      className={`p-1.5 rounded-lg border flex items-center justify-between cursor-pointer transition-all ${
-                        isLight
-                          ? 'bg-slate-50 hover:bg-slate-100 border-slate-200'
-                          : 'bg-[#060812] hover:bg-[#0c1022] border-cyan-500/20'
-                      }`}
-                      title="Cliquer pour voir et imprimer ce ticket"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`text-[11px] font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                            {tx.ticketNumber}
-                          </span>
-                          <span className="text-[9px] opacity-60 font-mono">
-                            {tx.timestamp.slice(11, 16)}
-                          </span>
+                  recentTransactions.slice(0, 3).map((tx) => {
+                    const isCancelled = tx.status === 'cancelled';
+                    return (
+                      <div
+                        key={tx.id}
+                        onClick={() => setCompletedTx(tx)}
+                        className={`p-1.5 rounded-lg border flex items-center justify-between cursor-pointer transition-all ${
+                          isCancelled
+                            ? isLight
+                              ? 'bg-rose-50/60 border-rose-200 opacity-85'
+                              : 'bg-rose-950/20 border-rose-900/50 opacity-85'
+                            : isLight
+                            ? 'bg-slate-50 hover:bg-slate-100 border-slate-200'
+                            : 'bg-[#060812] hover:bg-[#0c1022] border-cyan-500/20'
+                        }`}
+                        title="Cliquer pour voir et imprimer ce ticket"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-[11px] font-bold ${isCancelled ? 'line-through text-slate-400' : isLight ? 'text-slate-900' : 'text-white'}`}>
+                              {tx.ticketNumber}
+                            </span>
+                            {isCancelled ? (
+                              <span className="text-[9px] font-bold px-1 rounded bg-rose-500 text-white uppercase">
+                                Annulée
+                              </span>
+                            ) : (
+                              <span className="text-[9px] opacity-60 font-mono">
+                                {tx.timestamp.slice(11, 16)}
+                              </span>
+                            )}
+                          </div>
+                          <p className={`text-[10px] truncate max-w-[140px] ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
+                            {isCancelled ? tx.cancellationReason || 'Vente annulée' : tx.items[0]?.productName || 'Vente'}
+                          </p>
                         </div>
-                        <p className={`text-[10px] truncate max-w-[130px] ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
-                          {tx.items[0]?.productName || 'Vente'}
-                        </p>
-                      </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className={`text-[11px] font-bold font-mono ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
-                          {formatMoney(tx.totalAmount)}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setCompletedTx(tx);
-                            printThermalReceipt(tx, business);
-                          }}
-                          className={`p-1 rounded transition-colors cursor-pointer ${
-                            isLight ? 'hover:bg-slate-200 text-slate-700' : 'hover:bg-neutral-800 text-cyan-300'
-                          }`}
-                          title="Imprimer ce ticket (80mm)"
-                        >
-                          <Printer className="w-3 h-3" />
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className={`text-[11px] font-bold font-mono tabular-nums ${
+                            isCancelled
+                              ? 'line-through text-rose-500'
+                              : isLight
+                              ? 'text-emerald-700'
+                              : 'text-emerald-400'
+                          }`}>
+                            {formatMoney(tx.totalAmount)}
+                          </span>
+                          {!isCancelled && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedTxForCancel(tx);
+                              }}
+                              className={`p-1 rounded transition-colors cursor-pointer ${
+                                isLight ? 'hover:bg-rose-100 text-rose-600' : 'hover:bg-rose-950/60 text-rose-400'
+                              }`}
+                              title="Annuler cette vente avec justification"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCompletedTx(tx);
+                              printThermalReceipt(tx, business);
+                            }}
+                            className={`p-1 rounded transition-colors cursor-pointer ${
+                              isLight ? 'hover:bg-slate-200 text-slate-700' : 'hover:bg-neutral-800 text-cyan-300'
+                            }`}
+                            title="Imprimer ce ticket (80mm)"
+                          >
+                            <Printer className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -2117,8 +2242,11 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
                 <button
                   type="button"
-                  onClick={() => setShowCameraScannerModal(true)}
-                  className={`h-9 px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
+                  onClick={() => {
+                    setCameraScanPurpose('sale');
+                    setShowCameraScannerModal(true);
+                  }}
+                  className={`h-9 px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer whitespace-nowrap shrink-0 active:scale-95 ${
                     isLight
                       ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-2xs'
                       : 'bg-cyan-500 hover:bg-cyan-400 text-neutral-950 border-cyan-400 shadow-[0_0_12px_rgba(0,242,254,0.35)]'
@@ -2128,20 +2256,53 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   <Camera className="w-3.5 h-3.5" />
                   <span>Caméra [F3]</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCameraScanPurpose('register');
+                    setShowCameraScannerModal(true);
+                  }}
+                  className={`h-9 px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer whitespace-nowrap shrink-0 active:scale-95 ${
+                    isLight
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                      : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/40'
+                  }`}
+                  title="Scanner un code-barres pour enregistrer un nouvel article au catalogue"
+                >
+                  <PackagePlus className="w-3.5 h-3.5" />
+                  <span>Nouveau par scan</span>
+                </button>
               </div>
             </div>
 
             {/* Barcode feedback notice banner if present */}
             {quickBarcodeNotice && (
               <div
-                className={`px-4 py-1.5 border-b text-xs flex items-center gap-2 ${
+                className={`px-4 py-1.5 border-b text-xs flex items-center justify-between gap-2 ${
                   isLight
                     ? 'bg-amber-50 border-amber-200 text-amber-800'
                     : 'bg-cyan-950/40 border-cyan-500/30 text-cyan-300'
                 }`}
               >
-                <Zap className="w-3.5 h-3.5 shrink-0" />
-                <span className="font-mono">{quickBarcodeNotice}</span>
+                <div className="flex items-center gap-2">
+                  <Zap className="w-3.5 h-3.5 shrink-0" />
+                  <span className="font-mono">{quickBarcodeNotice}</span>
+                </div>
+                {quickUnknownBarcode && (
+                  <button
+                    type="button"
+                    onClick={() => setBarcodeToCreate(quickUnknownBarcode)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 ${
+                      isLight
+                        ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                        : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950'
+                    }`}
+                  >
+                    <PackagePlus className="w-3 h-3" />
+                    <span>Créer l’article</span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -2602,11 +2763,109 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
       {/* Camera Barcode Scanner Modal */}
       <CameraBarcodeScannerModal
         isOpen={showCameraScannerModal}
-        onClose={() => setShowCameraScannerModal(false)}
+        onClose={() => {
+          setShowCameraScannerModal(false);
+          setCameraScanPurpose('sale');
+        }}
         onBarcodeScanned={handleProcessScannedBarcode}
+        onCreateProductFromBarcode={(code) => {
+          setShowCameraScannerModal(false);
+          setCameraScanPurpose('sale');
+          setBarcodeToCreate(code);
+        }}
         products={products}
-        currentMode={posMode}
+        currentMode={cameraScanPurpose === 'register' ? 'register' : posMode}
       />
+
+      {/* Quick Add Scanned Product Modal */}
+      <QuickAddScannedProductModal
+        isOpen={barcodeToCreate !== null}
+        business={business}
+        initialBarcode={barcodeToCreate || ''}
+        existingProducts={products}
+        onClose={() => setBarcodeToCreate(null)}
+        onRescanRequested={() => {
+          setBarcodeToCreate(null);
+          setCameraScanPurpose('register');
+          setShowCameraScannerModal(true);
+        }}
+        submitLabel="Enregistrer & Ajouter au ticket"
+        onCreated={(created) => {
+          refreshData();
+          setBarcodeToCreate(null);
+          setQuickUnknownBarcode(null);
+          setQuickBarcodeNotice(null);
+
+          if (created.stock > 0) {
+            if (posMode === 'catalog') {
+              addToCart(created, 1);
+            } else {
+              setDirectItems((prev) => [
+                ...prev,
+                {
+                  id: `scan_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                  label: created.name,
+                  amount: created.salePrice,
+                  quantity: 1,
+                },
+              ]);
+              setDirectLabel(created.name);
+            }
+          }
+
+          setGlobalNotice({
+            message: `Article « ${created.name} » (${created.barcode}) créé au catalogue${
+              created.stock > 0 ? ' et ajouté au ticket' : ''
+            }.`,
+            type: 'success',
+          });
+          setTimeout(() => {
+            setGlobalNotice((prev) => (prev?.type === 'success' ? null : prev));
+          }, 4500);
+        }}
+      />
+
+      {/* Recent Sales & Justified Cancellation Modal */}
+      {showRecentSalesModal && (
+        <RecentSalesModal
+          business={business}
+          currentUser={currentUser}
+          onClose={() => setShowRecentSalesModal(false)}
+          onSaleCancelled={(cancelledTx) => {
+            refreshData();
+            if (lastSaleTx?.id === cancelledTx.id) {
+              setLastSaleTx(cancelledTx);
+            }
+            setGlobalNotice({
+              message: `Ticket ${cancelledTx.ticketNumber} annulé (${cancelledTx.cancellationReason || 'justifié'}) par ${cancelledTx.cancelledBy || currentUser.name} [${cancelledTx.cancelledById || currentUser.id}].`,
+              type: 'info',
+            });
+            setTimeout(() => setGlobalNotice(null), 5000);
+          }}
+        />
+      )}
+
+      {/* Direct Cancel Sale Modal from POSView */}
+      {selectedTxForCancel && (
+        <CancelSaleModal
+          transaction={selectedTxForCancel}
+          business={business}
+          currentUser={currentUser}
+          onClose={() => setSelectedTxForCancel(null)}
+          onSuccess={(cancelledTx) => {
+            setSelectedTxForCancel(null);
+            refreshData();
+            if (lastSaleTx?.id === cancelledTx.id) {
+              setLastSaleTx(cancelledTx);
+            }
+            setGlobalNotice({
+              message: `Ticket ${cancelledTx.ticketNumber} annulé (${cancelledTx.cancellationReason || 'justifié'}) par ${cancelledTx.cancelledBy || currentUser.name} [${cancelledTx.cancelledById || currentUser.id}].`,
+              type: 'info',
+            });
+            setTimeout(() => setGlobalNotice(null), 5000);
+          }}
+        />
+      )}
     </div>
   );
 };

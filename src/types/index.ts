@@ -105,6 +105,7 @@ export interface SaleTransaction {
   status: 'completed' | 'refunded' | 'cancelled';
   cancelledAt?: string;
   cancelledBy?: string;
+  cancelledById?: string;
   cancellationReason?: string;
 }
 

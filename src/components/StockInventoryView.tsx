@@ -1,24 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Business, Product, StockMovement, User } from '../types';
-import { store } from '../services/store';
+import { store, playSoundEffect } from '../services/store';
 import { useTheme } from '../services/themeContext';
 import { formatMoney, formatDate } from '../utils/formatters';
+import { CameraBarcodeScannerModal } from './CameraBarcodeScannerModal';
+import { QuickAddScannedProductModal } from './QuickAddScannedProductModal';
 import {
   Package,
   AlertTriangle,
   Plus,
-  ArrowDownLeft,
-  ArrowUpRight,
   Search,
-  Filter,
-  Edit2,
   Trash2,
-  Barcode,
-  History,
-  CheckCircle,
   TrendingUp,
-  Tag,
   Layers,
+  Camera,
+  CheckCircle,
+  X,
 } from 'lucide-react';
 
 interface StockInventoryViewProps {
@@ -40,6 +37,13 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
 
   // Modals
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
+  const [showScanToAddCamera, setShowScanToAddCamera] = useState<boolean>(false);
+  const [scanCaptureTarget, setScanCaptureTarget] = useState<'quick-create' | 'fill-add-modal'>('quick-create');
+  const [scannedBarcodeForCreate, setScannedBarcodeForCreate] = useState<string | null>(null);
+  const [inventoryNotice, setInventoryNotice] = useState<{
+    message: string;
+    type: 'success' | 'info';
+  } | null>(null);
   const [adjustTargetProduct, setAdjustTargetProduct] = useState<Product | null>(null);
   const [adjustQuantity, setAdjustQuantity] = useState<string>('10');
   const [adjustType, setAdjustType] = useState<'in' | 'out'>('in');
@@ -56,6 +60,16 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
   const [newMinAlert, setNewMinAlert] = useState<string>('5');
   const [newUnit, setNewUnit] = useState<string>('pièce');
 
+  const usbBufferRef = useRef<string>('');
+  const usbLastKeyRef = useRef<number>(0);
+
+  const showNotice = (message: string, type: 'success' | 'info' = 'success') => {
+    setInventoryNotice({ message, type });
+    setTimeout(() => {
+      setInventoryNotice((prev) => (prev?.message === message ? null : prev));
+    }, 5000);
+  };
+
   const refreshData = () => {
     setProducts(store.getProducts(business.id));
     setMovements(store.getStockMovements(business.id));
@@ -68,6 +82,79 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
     });
     return () => unsub();
   }, [business.id]);
+
+  // Handle scanned barcode in Inventory (camera or USB douchette)
+  const handleInventoryBarcodeScanned = (
+    rawCode: string
+  ): { success: boolean; product?: Product; error?: string } => {
+    const cleanCode = rawCode.trim();
+    if (!cleanCode) return { success: false, error: 'Code vide' };
+
+    if (scanCaptureTarget === 'fill-add-modal') {
+      setNewBarcode(cleanCode);
+      setScanCaptureTarget('quick-create');
+      playSoundEffect('beep');
+      return { success: true };
+    }
+
+    const existing = products.find(
+      (p) =>
+        p.barcode?.trim() === cleanCode ||
+        p.barcode?.replace(/\s+/g, '') === cleanCode.replace(/\s+/g, '')
+    );
+
+    if (existing) {
+      playSoundEffect('beep');
+      setAdjustTargetProduct(existing);
+      setAdjustType('in');
+      setAdjustReason(`Réapprovisionnement par scan (${cleanCode})`);
+      showNotice(
+        `Article déjà répertorié : « ${existing.name} » (${existing.stock} ${existing.unit}). Vous pouvez ajuster son stock.`,
+        'info'
+      );
+      return { success: true, product: existing };
+    }
+
+    playSoundEffect('beep');
+    setScannedBarcodeForCreate(cleanCode);
+    return { success: true };
+  };
+
+  // USB Barcode Scanner (Keyboard Wedge) support when on Inventory screen
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (showAddModal || showScanToAddCamera || scannedBarcodeForCreate || adjustTargetProduct) {
+        return;
+      }
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl?.tagName || '')) {
+        return;
+      }
+
+      const now = Date.now();
+      const diff = now - usbLastKeyRef.current;
+      usbLastKeyRef.current = now;
+
+      if (e.key === 'Enter') {
+        if (usbBufferRef.current.length >= 3 && diff < 90) {
+          e.preventDefault();
+          const code = usbBufferRef.current;
+          usbBufferRef.current = '';
+          handleInventoryBarcodeScanned(code);
+          return;
+        }
+        usbBufferRef.current = '';
+      } else if (e.key.length === 1) {
+        if (diff > 70 && usbBufferRef.current.length > 0) {
+          usbBufferRef.current = '';
+        }
+        usbBufferRef.current += e.key;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [products, showAddModal, showScanToAddCamera, scannedBarcodeForCreate, adjustTargetProduct]);
 
   const categories = ['all', ...Array.from(new Set(products.map((p) => p.category)))];
 
@@ -96,7 +183,7 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
     const autoCode = newCode.trim() || `ART-${String(products.length + 1).padStart(3, '0')}`;
     const autoBarcode = newBarcode.trim() || `618${Date.now().toString().slice(-9)}`;
 
-    store.addProduct({
+    const created = store.addProduct({
       businessId: business.id,
       code: autoCode,
       barcode: autoBarcode,
@@ -109,11 +196,12 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
       unit: newUnit.trim() || 'pièce',
     });
 
+    playSoundEffect('beep');
     setShowAddModal(false);
     setNewName('');
     setNewCode('');
     setNewBarcode('');
-    alert(`Produit "${newName}" ajouté au catalogue.`);
+    showNotice(`Article « ${created.name} » ajouté au catalogue (${created.barcode}).`, 'success');
   };
 
   // Handle stock adjustment submit
@@ -125,9 +213,11 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
     const delta = adjustType === 'in' ? qty : -qty;
 
     store.adjustStock(adjustTargetProduct.id, delta, adjustReason);
+    const targetName = adjustTargetProduct.name;
     setAdjustTargetProduct(null);
     setAdjustQuantity('10');
-    alert(`Stock mis à jour pour ${adjustTargetProduct.name}.`);
+    playSoundEffect('beep');
+    showNotice(`Stock mis à jour pour « ${targetName} ».`, 'success');
   };
 
   // Delete product
@@ -162,14 +252,32 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
           </h1>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
+            type="button"
+            onClick={() => {
+              setScanCaptureTarget('quick-create');
+              setShowScanToAddCamera(true);
+            }}
+            className={`px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all border cursor-pointer whitespace-nowrap ${
+              isLight
+                ? 'bg-white hover:bg-slate-50 text-slate-800 border-slate-300 shadow-xs'
+                : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-cyan-500/40'
+            }`}
+            title="Scanner un code-barres avec la caméra pour créer un nouvel article"
+          >
+            <Camera className="w-4 h-4" />
+            <span>Scanner pour Ajouter</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => {
               setNewCode(`ART-${String(products.length + 1).padStart(3, '0')}`);
               setNewBarcode(`618${Date.now().toString().slice(-9)}`);
               setShowAddModal(true);
             }}
-            className={`px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-sm ${
+            className={`px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-sm cursor-pointer whitespace-nowrap ${
               isLight
                 ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20 active:scale-95'
                 : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 neon-glow shadow-cyan-400/30'
@@ -180,6 +288,32 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
           </button>
         </div>
       </div>
+
+      {inventoryNotice && (
+        <div
+          className={`px-4 py-3 rounded-xl border text-xs font-semibold flex items-center justify-between gap-3 ${
+            inventoryNotice.type === 'success'
+              ? isLight
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                : 'bg-emerald-950/40 border-emerald-700 text-emerald-300'
+              : isLight
+              ? 'bg-sky-50 border-sky-200 text-sky-900'
+              : 'bg-cyan-950/40 border-cyan-700 text-cyan-300'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 shrink-0" />
+            <span>{inventoryNotice.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setInventoryNotice(null)}
+            className="opacity-60 hover:opacity-100 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* KPI Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -802,16 +936,38 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
 
                 <div>
                   <label className={`block font-semibold mb-1 ${isLight ? 'text-slate-700' : 'text-neutral-300'}`}>Code-barres (EAN-13)</label>
-                  <input
-                    type="text"
-                    value={newBarcode}
-                    onChange={(e) => setNewBarcode(e.target.value)}
-                    className={`w-full px-3 py-2 rounded-lg font-mono transition-colors ${
-                      isLight
-                        ? 'bg-white border border-slate-300 text-amber-700 focus:outline-hidden focus:border-amber-500'
-                        : 'bg-neutral-950 border border-neutral-800 text-cyan-300 focus:outline-hidden focus:border-cyan-400'
-                    }`}
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={newBarcode}
+                      onChange={(e) => setNewBarcode(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                        }
+                      }}
+                      className={`w-full px-3 py-2 rounded-lg font-mono transition-colors ${
+                        isLight
+                          ? 'bg-white border border-slate-300 text-amber-700 focus:outline-hidden focus:border-amber-500'
+                          : 'bg-neutral-950 border border-neutral-800 text-cyan-300 focus:outline-hidden focus:border-cyan-400'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScanCaptureTarget('fill-add-modal');
+                        setShowScanToAddCamera(true);
+                      }}
+                      className={`p-2 rounded-lg border shrink-0 cursor-pointer ${
+                        isLight
+                          ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                          : 'bg-neutral-800 hover:bg-neutral-700 text-cyan-300 border-neutral-700'
+                      }`}
+                      title="Scanner le code-barres avec la caméra"
+                    >
+                      <Camera className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -910,6 +1066,36 @@ export const StockInventoryView: React.FC<StockInventoryViewProps> = ({ currentU
           </div>
         </div>
       )}
+
+      {/* Camera Barcode Scanner for Creating / Restocking a Product */}
+      <CameraBarcodeScannerModal
+        isOpen={showScanToAddCamera}
+        onClose={() => setShowScanToAddCamera(false)}
+        onBarcodeScanned={handleInventoryBarcodeScanned}
+        products={products}
+        currentMode="register"
+      />
+
+      {/* Quick Add New Product from Scanned Barcode */}
+      <QuickAddScannedProductModal
+        isOpen={Boolean(scannedBarcodeForCreate)}
+        business={business}
+        initialBarcode={scannedBarcodeForCreate || ''}
+        existingProducts={products}
+        onClose={() => setScannedBarcodeForCreate(null)}
+        onRescanRequested={() => {
+          setScannedBarcodeForCreate(null);
+          setScanCaptureTarget('quick-create');
+          setShowScanToAddCamera(true);
+        }}
+        onCreated={(created) => {
+          setScannedBarcodeForCreate(null);
+          showNotice(
+            `Nouvel article « ${created.name} » (${created.barcode}) créé et ajouté au stock (${created.stock} ${created.unit}).`,
+            'success'
+          );
+        }}
+      />
     </div>
   );
 };

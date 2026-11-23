@@ -87,8 +87,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
     credit: 'À crédit (Compte Client)',
   };
 
+  const isCancelled = transaction.status === 'cancelled';
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div
         className={`rounded-xl max-w-md w-full shadow-2xl overflow-hidden flex flex-col border my-auto transition-all ${
           isLight ? 'retail-card bg-white border-slate-300' : 'neon-card bg-neutral-900 border-neutral-800'
@@ -102,11 +104,15 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
         >
           <div
             className={`flex items-center gap-2 text-sm font-bold ${
-              isLight ? 'text-emerald-700' : 'text-emerald-400'
+              isCancelled
+                ? 'text-rose-500'
+                : isLight
+                ? 'text-emerald-700'
+                : 'text-emerald-400'
             }`}
           >
             <CheckCircle2 className="w-4 h-4" />
-            <span>Vente Validée · Ticket de Caisse</span>
+            <span>{isCancelled ? 'Vente Annulée · Ticket Archivé' : 'Vente Validée · Ticket de Caisse'}</span>
           </div>
           <button
             onClick={onClose}
@@ -186,6 +192,16 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
               {business.address && <p className="text-xs font-bold text-black mt-0.5">{business.address}</p>}
               {business.phone && <p className="text-xs font-bold text-black">Tél: {business.phone}</p>}
               <p className="text-[11px] font-bold text-black mt-1">Commerce Enregistré · Caisse Pro</p>
+              {isCancelled && (
+                <div className="mt-2 p-1.5 border-2 border-black bg-rose-100 text-black text-[11px] font-black uppercase">
+                  *** VENTE ANNULÉE ***
+                  {transaction.cancellationReason && (
+                    <div className="font-bold normal-case mt-0.5">
+                      Motif : {transaction.cancellationReason}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Ticket info */}

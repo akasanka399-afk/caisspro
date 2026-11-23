@@ -25,14 +25,16 @@ interface CameraBarcodeScannerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onBarcodeScanned: (barcode: string) => { success: boolean; product?: Product; error?: string };
+  onCreateProductFromBarcode?: (barcode: string) => void;
   products: Product[];
-  currentMode: 'direct' | 'catalog';
+  currentMode: 'direct' | 'catalog' | 'register';
 }
 
 export const CameraBarcodeScannerModal: React.FC<CameraBarcodeScannerModalProps> = ({
   isOpen,
   onClose,
   onBarcodeScanned,
+  onCreateProductFromBarcode,
   products,
   currentMode,
 }) => {
@@ -46,10 +48,11 @@ export const CameraBarcodeScannerModal: React.FC<CameraBarcodeScannerModalProps>
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Settings
-  const [continuousMode, setContinuousMode] = useState<boolean>(true);
+  const [continuousMode, setContinuousMode] = useState<boolean>(currentMode !== 'register');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [torchOn, setTorchOn] = useState<boolean>(false);
   const [hasTorch, setHasTorch] = useState<boolean>(false);
+  const [lastUnknownBarcode, setLastUnknownBarcode] = useState<string | null>(null);
 
   // Scanned history inside modal
   const [recentScans, setRecentScans] = useState<{
@@ -184,7 +187,7 @@ export const CameraBarcodeScannerModal: React.FC<CameraBarcodeScannerModalProps>
     setScanFlash(true);
     setTimeout(() => setScanFlash(false), 250);
 
-    // Process via parent POSView
+    // Process via parent
     const result = onBarcodeScanned(cleanCode);
 
     if (soundEnabled) {
@@ -193,6 +196,19 @@ export const CameraBarcodeScannerModal: React.FC<CameraBarcodeScannerModalProps>
       } else {
         playSoundEffect('error');
       }
+    }
+
+    if (currentMode === 'register') {
+      setTimeout(() => {
+        handleClose();
+      }, 250);
+      return;
+    }
+
+    if (!result.success) {
+      setLastUnknownBarcode(cleanCode);
+    } else {
+      setLastUnknownBarcode(null);
     }
 
     // Add to modal recent history
@@ -241,6 +257,8 @@ export const CameraBarcodeScannerModal: React.FC<CameraBarcodeScannerModalProps>
   // Fetch cameras on mount
   useEffect(() => {
     if (!isOpen) return;
+    setLastUnknownBarcode(null);
+    setContinuousMode(currentMode !== 'register');
 
     let mounted = true;
 
@@ -343,7 +361,11 @@ export const CameraBarcodeScannerModal: React.FC<CameraBarcodeScannerModalProps>
                 </span>
               </div>
               <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-neutral-400'}`}>
-                {currentMode === 'direct' ? 'Ajout direct au ticket de caisse' : 'Ajout au panier catalogue'}
+                {currentMode === 'register'
+                  ? 'Scannez le code-barres du nouvel article à créer'
+                  : currentMode === 'direct'
+                  ? 'Ajout direct au ticket de caisse'
+                  : 'Ajout au panier catalogue'}
               </p>
             </div>
           </div>
@@ -549,8 +571,43 @@ export const CameraBarcodeScannerModal: React.FC<CameraBarcodeScannerModalProps>
             </button>
           </form>
 
+          {/* Action rapide : créer l'article si code-barres inconnu */}
+          {lastUnknownBarcode && onCreateProductFromBarcode && currentMode !== 'register' && (
+            <div
+              className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-2 text-xs ${
+                isLight
+                  ? 'bg-amber-50 border-amber-300 text-amber-950'
+                  : 'bg-amber-950/30 border-amber-500/40 text-amber-200'
+              }`}
+            >
+              <div className="space-y-0.5">
+                <span className="font-bold block">Code-barres inconnu : {lastUnknownBarcode}</span>
+                <span className="text-[11px] opacity-80 block">
+                  Cet article n’est pas encore dans le catalogue.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  const codeToCreate = lastUnknownBarcode;
+                  await stopScanner();
+                  onClose();
+                  onCreateProductFromBarcode(codeToCreate);
+                }}
+                className={`px-3 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                  isLight
+                    ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                    : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950'
+                }`}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Créer cet article</span>
+              </button>
+            </div>
+          )}
+
           {/* Historique des Scans Récents de cette session */}
-          {recentScans.length > 0 && (
+          {recentScans.length > 0 && currentMode !== 'register' && (
             <div className="space-y-1.5 pt-1 border-t border-neutral-700/30">
               <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-neutral-400 px-1">
                 <span>Articles Scannés Récemment</span>
@@ -581,10 +638,25 @@ export const CameraBarcodeScannerModal: React.FC<CameraBarcodeScannerModalProps>
                         <span className="font-mono text-[10px] opacity-70 ml-2">[{sc.barcode}]</span>
                       </div>
                     </div>
-                    {sc.price > 0 && (
+                    {sc.price > 0 ? (
                       <span className="font-extrabold font-mono shrink-0 ml-2">
                         +{formatMoney(sc.price)}
                       </span>
+                    ) : (
+                      !sc.success &&
+                      onCreateProductFromBarcode && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await stopScanner();
+                            onClose();
+                            onCreateProductFromBarcode(sc.barcode);
+                          }}
+                          className="ml-2 px-2 py-1 rounded text-[11px] font-bold bg-amber-500 hover:bg-amber-600 text-white shrink-0 cursor-pointer"
+                        >
+                          + Créer
+                        </button>
+                      )
                     )}
                   </div>
                 ))}
