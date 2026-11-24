@@ -300,7 +300,7 @@ service cloud.firestore {
     // Products
     match /products/{productId} {
       allow get: if isValidId(productId);
-      allow list: if isSignedIn() || resource.data.businessId is string;
+      allow list: if isSignedIn() || resource.data.businessId > '' || resource.data.businessId is string;
       allow create, update: if isValidId(productId)
         && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 150
         && request.resource.data.salePrice is number && request.resource.data.salePrice >= 0
@@ -311,7 +311,7 @@ service cloud.firestore {
     // Customers
     match /customers/{customerId} {
       allow get: if isValidId(customerId);
-      allow list: if isSignedIn() || resource.data.businessId is string;
+      allow list: if isSignedIn() || resource.data.businessId > '' || resource.data.businessId is string;
       allow create, update: if isValidId(customerId)
         && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
         && request.resource.data.phone is string && request.resource.data.phone.size() <= 30;
@@ -321,7 +321,7 @@ service cloud.firestore {
     // Transactions
     match /transactions/{transactionId} {
       allow get: if isValidId(transactionId);
-      allow list: if isSignedIn() || resource.data.businessId is string;
+      allow list: if isSignedIn() || resource.data.businessId > '' || resource.data.businessId is string;
       allow create: if isValidId(transactionId)
         && request.resource.data.totalAmount is number && request.resource.data.totalAmount >= 0
         && request.resource.data.ticketNumber is string && request.resource.data.ticketNumber.size() <= 50
@@ -342,7 +342,7 @@ service cloud.firestore {
     // Credit settlements
     match /credit_settlements/{settlementId} {
       allow get: if isValidId(settlementId);
-      allow list: if isSignedIn() || resource.data.businessId is string;
+      allow list: if isSignedIn() || resource.data.businessId > '' || resource.data.businessId is string;
       allow create, update: if isValidId(settlementId)
         && request.resource.data.businessId is string
         && request.resource.data.amount is number && request.resource.data.amount >= 0;
@@ -352,7 +352,7 @@ service cloud.firestore {
     // Cash Register Sessions
     match /sessions/{sessionId} {
       allow get: if isValidId(sessionId);
-      allow list: if isSignedIn() || resource.data.businessId is string;
+      allow list: if isSignedIn() || resource.data.businessId > '' || resource.data.businessId is string;
       allow create, update: if isValidId(sessionId)
         && request.resource.data.status in ['open', 'closed']
         && request.resource.data.openingFloat is number;
@@ -372,7 +372,7 @@ service cloud.firestore {
     // Stock Movements
     match /movements/{movementId} {
       allow get: if isValidId(movementId);
-      allow list: if isSignedIn() || resource.data.businessId is string;
+      allow list: if isSignedIn() || resource.data.businessId > '' || resource.data.businessId is string;
       allow create: if isValidId(movementId)
         && request.resource.data.productId is string
         && request.resource.data.type in ['in', 'out', 'sale', 'adjustment']

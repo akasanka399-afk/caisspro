@@ -1,5 +1,12 @@
 import { Business, SaleTransaction, CashRegisterSession } from '../types';
 import { formatMoney, formatDate } from './formatters';
+import { bluetoothPrinter, PaperWidth } from '../services/bluetoothPrinter';
+
+export interface PrintReceiptOptions {
+  paperWidth?: PaperWidth;
+  forceBluetooth?: boolean;
+  forceSystemPrint?: boolean;
+}
 
 const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Espèces (Cash)',
@@ -10,22 +17,32 @@ const PAYMENT_LABELS: Record<string, string> = {
 
 /**
  * Builds a clean, high-contrast, thermal-ready HTML document string
- * formatted specifically for 80mm (and 58mm) thermal POS printers.
+ * formatted specifically for 80mm or 58mm thermal POS printers.
  */
-export function buildThermalReceiptHtml(transaction: SaleTransaction, business: Business): string {
+export function buildThermalReceiptHtml(
+  transaction: SaleTransaction,
+  business: Business,
+  paperWidth: PaperWidth = bluetoothPrinter.getPaperWidth()
+): string {
+  const is58 = paperWidth === '58mm';
+  const pageSize = is58 ? '58mm auto' : '80mm auto';
+  const containerWidth = is58 ? '54mm' : '76mm';
+  const baseFont = is58 ? '11px' : '13px';
+  const storeFont = is58 ? '14.5px' : '18px';
+  const grandFont = is58 ? '14.5px' : '18px';
   const itemsRows = transaction.items
     .map(
       (it) => `
       <tr>
         <td style="padding: 4px 0; vertical-align: top;">
-          <div style="font-size: 13.5px; font-weight: 800; color: #000000; line-height: 1.25;">
+          <div style="font-size: ${is58 ? '11.5px' : '13.5px'}; font-weight: 800; color: #000000; line-height: 1.25;">
             ${escapeHtml(it.productName)}
           </div>
-          <div style="font-size: 12px; font-weight: 700; color: #000000; margin-top: 1px;">
+          <div style="font-size: ${is58 ? '10.5px' : '12px'}; font-weight: 700; color: #000000; margin-top: 1px;">
             ${it.quantity} x ${formatMoney(it.unitPrice, 'F')}
           </div>
         </td>
-        <td style="padding: 4px 0; text-align: right; vertical-align: top; font-size: 13.5px; font-weight: 900; color: #000000; white-space: nowrap;">
+        <td style="padding: 4px 0; text-align: right; vertical-align: top; font-size: ${is58 ? '11.5px' : '13.5px'}; font-weight: 900; color: #000000; white-space: nowrap;">
           ${formatMoney(it.total, 'F')}
         </td>
       </tr>
@@ -37,10 +54,10 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>Ticket ${transaction.ticketNumber} - ${escapeHtml(business.name)}</title>
+  <title>Ticket ${transaction.ticketNumber} (${paperWidth}) - ${escapeHtml(business.name)}</title>
   <style>
     @page {
-      size: 80mm auto;
+      size: ${pageSize};
       margin: 0mm;
     }
     *, *::before, *::after {
@@ -52,19 +69,19 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
       background: #ffffff !important;
       color: #000000 !important;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'DejaVu Sans Mono', Arial, sans-serif, monospace;
-      font-size: 13px;
+      font-size: ${baseFont};
       font-weight: 700;
-      line-height: 1.38;
+      line-height: 1.35;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
       -webkit-font-smoothing: antialiased;
       text-rendering: geometricPrecision;
     }
     .receipt-container {
-      width: 76mm;
+      width: ${containerWidth};
       max-width: 100%;
       margin: 0 auto;
-      padding: 4mm 2.5mm 8mm 2.5mm;
+      padding: ${is58 ? '3mm 1.5mm 6mm 1.5mm' : '4mm 2.5mm 8mm 2.5mm'};
       color: #000000 !important;
     }
     .text-center { text-align: center; }
@@ -73,9 +90,9 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
     .bold { font-weight: 900 !important; }
     .uppercase { text-transform: uppercase; }
     .store-name {
-      font-size: 18px;
+      font-size: ${storeFont};
       font-weight: 900;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.4px;
       margin: 0 0 3px 0;
       line-height: 1.2;
       color: #000000 !important;
@@ -102,7 +119,7 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
       display: flex;
       justify-content: space-between;
       margin: 2px 0;
-      font-size: 12.5px;
+      font-size: ${is58 ? '11px' : '12.5px'};
       font-weight: 700;
       color: #000000 !important;
     }
@@ -110,14 +127,14 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
       width: 100%;
       border-collapse: collapse;
       margin: 5px 0;
-      font-size: 13px;
+      font-size: ${is58 ? '11px' : '13px'};
       color: #000000 !important;
     }
     .items-table th {
       border-bottom: 2px solid #000000 !important;
       padding-bottom: 4px;
       font-weight: 900 !important;
-      font-size: 12.5px;
+      font-size: ${is58 ? '10.5px' : '12.5px'};
       text-transform: uppercase;
       color: #000000 !important;
     }
@@ -128,7 +145,7 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
       color: #000000 !important;
     }
     .grand-total {
-      font-size: 18px;
+      font-size: ${grandFont};
       font-weight: 900 !important;
       display: flex;
       justify-content: space-between;
@@ -329,18 +346,29 @@ export function buildThermalReceiptHtml(transaction: SaleTransaction, business: 
 /**
  * Generates formatted raw text ticket for thermal/ASCII printers or WhatsApp/SMS
  */
-export function buildThermalReceiptText(transaction: SaleTransaction, business: Business): string {
-  const line = '------------------------------------------';
-  const doubleLine = '==========================================';
+export function buildThermalReceiptText(
+  transaction: SaleTransaction,
+  business: Business,
+  paperWidth: PaperWidth = bluetoothPrinter.getPaperWidth()
+): string {
+  const cols = paperWidth === '58mm' ? 32 : 42;
+  const line = '-'.repeat(cols);
+  const doubleLine = '='.repeat(cols);
+  const nameWidth = cols - 14;
 
   const itemsText = transaction.items
     .map((it) => {
-      const name = it.productName.padEnd(26, ' ').slice(0, 26);
+      const name = it.productName.padEnd(nameWidth, ' ').slice(0, nameWidth);
       const total = formatMoney(it.total, 'F').padStart(14, ' ');
-      const sub = `   ${it.quantity} x ${formatMoney(it.unitPrice, 'F')}`;
+      const sub = `  ${it.quantity} x ${formatMoney(it.unitPrice, 'F')}`;
       return `${name}${total}\n${sub}`;
     })
     .join('\n');
+
+  const pairLine = (label: string, value: string) => {
+    const spaces = Math.max(1, cols - label.length - value.length);
+    return `${label}${' '.repeat(spaces)}${value}`;
+  };
 
   return [
     business.name.toUpperCase(),
@@ -354,16 +382,16 @@ export function buildThermalReceiptText(transaction: SaleTransaction, business: 
       transaction.customerPhone ? ` (${transaction.customerPhone})` : ''
     }`,
     line,
-    'Articles                                 Total',
+    pairLine('Articles', 'Total'),
     line,
     itemsText,
     line,
-    `Sous-total:             ${formatMoney(transaction.subtotal, 'F').padStart(16, ' ')}`,
+    pairLine('Sous-total:', formatMoney(transaction.subtotal, 'F')),
     transaction.discountTotal > 0
-      ? `Remise:                -${formatMoney(transaction.discountTotal, 'F').padStart(16, ' ')}`
+      ? pairLine('Remise:', `-${formatMoney(transaction.discountTotal, 'F')}`)
       : '',
     doubleLine,
-    `TOTAL À PAYER:         ${formatMoney(transaction.totalAmount, 'F CFA').padStart(16, ' ')}`,
+    pairLine('TOTAL A PAYER:', formatMoney(transaction.totalAmount, 'F CFA')),
     doubleLine,
     `Règlement: ${PAYMENT_LABELS[transaction.paymentMethod] || transaction.paymentMethod}`,
     transaction.paymentMethod === 'cash'
@@ -371,21 +399,60 @@ export function buildThermalReceiptText(transaction: SaleTransaction, business: 
       : '',
     line,
     'Merci pour votre confiance et à bientôt !',
-    'Caisse Pro v2.4',
+    'KassaPro POS',
   ]
     .filter(Boolean)
     .join('\n');
 }
 
 /**
- * Prints the thermal receipt via a dedicated isolated hidden iframe.
- * If iframe printing fails (e.g. sandbox restriction), falls back to window.print().
+ * Prints the thermal receipt via Bluetooth BLE (when connected/enabled)
+ * or via an isolated hidden iframe / window.print / HTML download fallback.
  */
 export async function printThermalReceipt(
   transaction: SaleTransaction,
-  business: Business
-): Promise<{ success: boolean; method: 'iframe' | 'window' | 'download' }> {
-  const html = buildThermalReceiptHtml(transaction, business);
+  business: Business,
+  options: PrintReceiptOptions = {}
+): Promise<{
+  success: boolean;
+  method: 'bluetooth' | 'iframe' | 'window' | 'download';
+  paperWidth: PaperWidth;
+  deviceName?: string | null;
+  bleFallbackReason?: string;
+}> {
+  const bleState = bluetoothPrinter.getState();
+  const paperWidth: PaperWidth = options.paperWidth || bleState.paperWidth;
+  let bleFallbackReason: string | undefined;
+
+  if (options.forceBluetooth) {
+    if (!bluetoothPrinter.isConnected()) {
+      throw new Error('Aucune imprimante Bluetooth BLE connectée.');
+    }
+    await bluetoothPrinter.printReceipt(transaction, business, paperWidth);
+    return {
+      success: true,
+      method: 'bluetooth',
+      paperWidth,
+      deviceName: bleState.deviceName,
+    };
+  }
+
+  if (!options.forceSystemPrint && bleState.autoPrintBle && bluetoothPrinter.isConnected()) {
+    try {
+      await bluetoothPrinter.printReceipt(transaction, business, paperWidth);
+      return {
+        success: true,
+        method: 'bluetooth',
+        paperWidth,
+        deviceName: bleState.deviceName,
+      };
+    } catch (err) {
+      bleFallbackReason = (err as Error)?.message || 'Erreur Bluetooth';
+      console.warn('BLE print failed, falling back to browser print:', err);
+    }
+  }
+
+  const html = buildThermalReceiptHtml(transaction, business, paperWidth);
 
   // Strategy 1: Dedicated hidden iframe
   try {
@@ -396,12 +463,12 @@ export async function printThermalReceipt(
       iframe.style.position = 'fixed';
       iframe.style.top = '-9999px';
       iframe.style.left = '-9999px';
-      iframe.style.width = '80mm';
       iframe.style.height = '100px';
       iframe.style.border = '0';
       iframe.style.visibility = 'hidden';
       document.body.appendChild(iframe);
     }
+    iframe.style.width = paperWidth;
 
     const doc = iframe.contentDocument || iframe.contentWindow?.document;
     if (doc) {
@@ -415,7 +482,7 @@ export async function printThermalReceipt(
       if (win) {
         win.focus();
         win.print();
-        return { success: true, method: 'iframe' };
+        return { success: true, method: 'iframe', paperWidth, bleFallbackReason };
       }
     }
   } catch (err) {
@@ -426,21 +493,25 @@ export async function printThermalReceipt(
   try {
     window.focus();
     window.print();
-    return { success: true, method: 'window' };
+    return { success: true, method: 'window', paperWidth, bleFallbackReason };
   } catch (err) {
     console.warn('window.print() was blocked or failed:', err);
   }
 
   // Strategy 3: Automatic file download fallback so user is never stranded
-  downloadReceiptHtml(transaction, business);
-  return { success: true, method: 'download' };
+  downloadReceiptHtml(transaction, business, paperWidth);
+  return { success: true, method: 'download', paperWidth, bleFallbackReason };
 }
 
 /**
  * Downloads a self-contained HTML ticket with auto-print capability
  */
-export function downloadReceiptHtml(transaction: SaleTransaction, business: Business): void {
-  const html = buildThermalReceiptHtml(transaction, business);
+export function downloadReceiptHtml(
+  transaction: SaleTransaction,
+  business: Business,
+  paperWidth: PaperWidth = bluetoothPrinter.getPaperWidth()
+): void {
+  const html = buildThermalReceiptHtml(transaction, business, paperWidth);
   // Add auto-print script on open for convenience
   const autoPrintHtml = html.replace(
     '</body>',
@@ -508,12 +579,17 @@ export async function copyReceiptToClipboard(transaction: SaleTransaction, busin
 /**
  * Builds high-contrast, thermal-ready HTML document for Official Z-Report (Clôture de Caisse)
  */
-export function buildThermalZReportHtml(session: CashRegisterSession, business: Business): string {
+export function buildThermalZReportHtml(
+  session: CashRegisterSession,
+  business: Business,
+  paperWidth: PaperWidth = bluetoothPrinter.getPaperWidth()
+): string {
+  const is58 = paperWidth === '58mm';
   const diff = session.cashDifference || 0;
   const isPerfect = diff === 0;
   const isSurplus = diff > 0;
   const avgBasket = session.totalSalesCount > 0 ? Math.round(session.totalSalesAmount / session.totalSalesCount) : 0;
-  const cur = business.currency || 'F CFA';
+  const cur = business.currency || 'FCFA';
   const zNum = session.zNumber || `Z-${session.id.slice(-6).toUpperCase()}`;
 
   // Denominations table if filled
@@ -554,10 +630,10 @@ export function buildThermalZReportHtml(session: CashRegisterSession, business: 
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>Rapport Z ${escapeHtml(zNum)} - ${escapeHtml(business.name)}</title>
+  <title>Rapport Z ${escapeHtml(zNum)} (${paperWidth}) - ${escapeHtml(business.name)}</title>
   <style>
     @page {
-      size: 80mm auto;
+      size: ${paperWidth} auto;
       margin: 0mm;
     }
     *, *::before, *::after {
@@ -569,23 +645,23 @@ export function buildThermalZReportHtml(session: CashRegisterSession, business: 
       background: #ffffff !important;
       color: #000000 !important;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'DejaVu Sans Mono', Arial, sans-serif, monospace;
-      font-size: 13px;
+      font-size: ${is58 ? '11px' : '13px'};
       font-weight: 700;
-      line-height: 1.38;
+      line-height: 1.35;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
     .ticket-wrapper {
       width: 100%;
-      max-width: 80mm;
+      max-width: ${is58 ? '54mm' : '80mm'};
       margin: 0 auto;
-      padding: 8px 6px 16px 6px;
+      padding: ${is58 ? '5px 3px 10px 3px' : '8px 6px 16px 6px'};
     }
     .text-center { text-align: center; }
     .text-right { text-align: right; }
     .bold { font-weight: 900; }
     .store-name {
-      font-size: 17px;
+      font-size: ${is58 ? '14px' : '17px'};
       font-weight: 900;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -596,7 +672,7 @@ export function buildThermalZReportHtml(session: CashRegisterSession, business: 
       margin: 6px auto;
       padding: 3px 8px;
       border: 2px solid #000000;
-      font-size: 14px;
+      font-size: ${is58 ? '12px' : '14px'};
       font-weight: 900;
       text-transform: uppercase;
       letter-spacing: 1px;
@@ -606,7 +682,7 @@ export function buildThermalZReportHtml(session: CashRegisterSession, business: 
       justify-content: space-between;
       align-items: baseline;
       margin: 2.5px 0;
-      font-size: 12.5px;
+      font-size: ${is58 ? '10.5px' : '12.5px'};
     }
     .divider-solid {
       border-top: 2px solid #000000;
@@ -858,9 +934,48 @@ export function buildThermalZReportText(session: CashRegisterSession, business: 
  */
 export async function printThermalZReport(
   session: CashRegisterSession,
-  business: Business
-): Promise<{ success: boolean; method: 'iframe' | 'window' }> {
-  const html = buildThermalZReportHtml(session, business);
+  business: Business,
+  options: PrintReceiptOptions = {}
+): Promise<{
+  success: boolean;
+  method: 'bluetooth' | 'iframe' | 'window';
+  paperWidth: PaperWidth;
+  deviceName?: string | null;
+  bleFallbackReason?: string;
+}> {
+  const bleState = bluetoothPrinter.getState();
+  const paperWidth: PaperWidth = options.paperWidth || bleState.paperWidth;
+  let bleFallbackReason: string | undefined;
+
+  if (options.forceBluetooth) {
+    if (!bluetoothPrinter.isConnected()) {
+      throw new Error('Aucune imprimante Bluetooth BLE connectée.');
+    }
+    await bluetoothPrinter.printZReport(session, business, paperWidth);
+    return {
+      success: true,
+      method: 'bluetooth',
+      paperWidth,
+      deviceName: bleState.deviceName,
+    };
+  }
+
+  if (!options.forceSystemPrint && bleState.autoPrintBle && bluetoothPrinter.isConnected()) {
+    try {
+      await bluetoothPrinter.printZReport(session, business, paperWidth);
+      return {
+        success: true,
+        method: 'bluetooth',
+        paperWidth,
+        deviceName: bleState.deviceName,
+      };
+    } catch (err) {
+      bleFallbackReason = (err as Error)?.message || 'Erreur Bluetooth';
+      console.warn('BLE Z-report print failed, falling back to browser print:', err);
+    }
+  }
+
+  const html = buildThermalZReportHtml(session, business, paperWidth);
 
   try {
     let iframe = document.getElementById('thermal-z-frame') as HTMLIFrameElement | null;
@@ -870,12 +985,12 @@ export async function printThermalZReport(
       iframe.style.position = 'fixed';
       iframe.style.top = '-9999px';
       iframe.style.left = '-9999px';
-      iframe.style.width = '80mm';
       iframe.style.height = '100px';
       iframe.style.border = '0';
       iframe.style.visibility = 'hidden';
       document.body.appendChild(iframe);
     }
+    iframe.style.width = paperWidth;
 
     const doc = iframe.contentDocument || iframe.contentWindow?.document;
     if (doc) {
@@ -889,7 +1004,7 @@ export async function printThermalZReport(
       if (win) {
         win.focus();
         win.print();
-        return { success: true, method: 'iframe' };
+        return { success: true, method: 'iframe', paperWidth, bleFallbackReason };
       }
     }
   } catch (err) {
@@ -899,7 +1014,7 @@ export async function printThermalZReport(
   // Fallback
   window.focus();
   window.print();
-  return { success: true, method: 'window' };
+  return { success: true, method: 'window', paperWidth, bleFallbackReason };
 }
 
 /**

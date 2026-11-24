@@ -33,6 +33,8 @@ import {
   ScanLine,
   BookOpen,
   PackagePlus,
+  Bluetooth,
+  BluetoothConnected,
 } from 'lucide-react';
 import { ReceiptModal } from './ReceiptModal';
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
@@ -40,6 +42,8 @@ import { CameraBarcodeScannerModal } from './CameraBarcodeScannerModal';
 import { RecentSalesModal } from './RecentSalesModal';
 import { CancelSaleModal } from './CancelSaleModal';
 import { QuickAddScannedProductModal } from './QuickAddScannedProductModal';
+import { BluetoothPrinterModal } from './BluetoothPrinterModal';
+import { useBluetoothPrinter } from '../services/bluetoothPrinter';
 import { printThermalReceipt } from '../utils/printReceipt';
 
 export const DIRECT_LABEL_PRESETS = [
@@ -106,7 +110,8 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   const [directCustomerPhone, setDirectCustomerPhone] = useState<string>('');
   const [directCustomerNote, setDirectCustomerNote] = useState<string>('');
 
-  // Modals
+  const ble = useBluetoothPrinter();
+  const [showBlePrinterModal, setShowBlePrinterModal] = useState<boolean>(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
   const [showCustomerModal, setShowCustomerModal] = useState<boolean>(false);
   const [showCameraScannerModal, setShowCameraScannerModal] = useState<boolean>(false);
@@ -210,60 +215,218 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
     setCompletedTx(targetTx);
     playSoundEffect('beep');
-    setGlobalNotice({
-      message: `Impression thermique du ticket ${targetTx.ticketNumber} en cours...`,
-      type: 'success',
-    });
-    setTimeout(() => setGlobalNotice(null), 3500);
 
     try {
-      await printThermalReceipt(targetTx, business);
+      const result = await printThermalReceipt(targetTx, business, {
+        paperWidth: ble.paperWidth,
+      });
+      if (result.method === 'bluetooth') {
+        playSoundEffect('cash');
+        setGlobalNotice({
+          message: `Ticket ${targetTx.ticketNumber} imprimé en Bluetooth (${result.paperWidth}) sur ${result.deviceName || 'Imprimante BLE'}.`,
+          type: 'success',
+        });
+      } else {
+        setGlobalNotice({
+          message: `Impression thermique (${result.paperWidth}) du ticket ${targetTx.ticketNumber} lancée.`,
+          type: 'success',
+        });
+      }
+      setTimeout(() => setGlobalNotice(null), 4000);
     } catch (err) {
       console.error('Erreur lors de l’impression du ticket:', err);
+      showErrorNotice("Erreur lors de l'impression du ticket.");
     }
   };
 
-  // Keyboard shortcut listener for both modes
+  // Keep latest state & handlers in a ref so global keyboard shortcuts (F1/F2/F3/...) never suffer from stale closures
+  const keyboardContextRef = useRef({
+    posMode,
+    cart,
+    cartTotal,
+    discountTotal,
+    searchQuery,
+    barcodeInput,
+    isProcessing,
+    directAmount,
+    numDirectAmount,
+    directItems,
+    totalDirectToPay,
+    directQuantity,
+    lastSaleTx,
+    recentTransactions: [] as SaleTransaction[],
+    showShortcutsModal,
+    showCustomerModal,
+    showCameraScannerModal,
+    showRecentSalesModal,
+    showBlePrinterModal,
+    selectedTxForCancel,
+    barcodeToCreate,
+    completedTx,
+    handleValidateSale: (_shouldPrint: boolean = false) => {},
+    handleValidateDirectSale: (_shouldPrint: boolean = false) => {},
+    handleClearDirectTicket: () => {},
+    clearCart: () => {},
+    handleAddDirectItem: () => {},
+    handleUpdateDirectItemQuantity: (_id: string, _delta: number) => {},
+    updateQuantity: (_productId: string, _delta: number) => {},
+    handleDirectNumpadPress: (_val: string) => {},
+    handlePrintTicket: () => {},
+  });
+
+  // Keyboard shortcut listener for both modes (F1: Valider vente, F2: Annuler, F3: Ajouter quantité)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const ctx = keyboardContextRef.current;
       const activeEl = document.activeElement as HTMLElement | null;
       const isInputActive = ['INPUT', 'TEXTAREA'].includes(activeEl?.tagName || '') && activeEl !== directInputRef.current;
+      const hasBlockingModal =
+        ctx.showShortcutsModal ||
+        ctx.showCustomerModal ||
+        ctx.showCameraScannerModal ||
+        ctx.showRecentSalesModal ||
+        ctx.showBlePrinterModal ||
+        ctx.selectedTxForCancel !== null ||
+        ctx.barcodeToCreate !== null ||
+        ctx.completedTx !== null;
 
       if (e.key === 'F1') {
+        // F1: Valider la vente (Shift+F1 ou Ctrl+F1 pour valider et imprimer)
         e.preventDefault();
-        setShowShortcutsModal((prev) => !prev);
+        if (hasBlockingModal || ctx.isProcessing) return;
+        const shouldPrint = e.shiftKey || e.ctrlKey;
+        if (ctx.posMode === 'catalog') {
+          ctx.handleValidateSale(shouldPrint);
+        } else {
+          ctx.handleValidateDirectSale(shouldPrint);
+        }
+      } else if (e.key === 'F2') {
+        // F2: Annuler (fermer modale, vider ticket/panier en cours, ou annuler une vente)
+        e.preventDefault();
+        if (ctx.selectedTxForCancel !== null) {
+          setSelectedTxForCancel(null);
+          playSoundEffect('beep');
+          return;
+        }
+        if (ctx.barcodeToCreate !== null) {
+          setBarcodeToCreate(null);
+          playSoundEffect('beep');
+          return;
+        }
+        if (ctx.showRecentSalesModal) {
+          setShowRecentSalesModal(false);
+          playSoundEffect('beep');
+          return;
+        }
+        if (ctx.showBlePrinterModal) {
+          setShowBlePrinterModal(false);
+          playSoundEffect('beep');
+          return;
+        }
+        if (ctx.showCameraScannerModal) {
+          setShowCameraScannerModal(false);
+          setCameraScanPurpose('sale');
+          playSoundEffect('beep');
+          return;
+        }
+        if (ctx.showShortcutsModal) {
+          setShowShortcutsModal(false);
+          playSoundEffect('beep');
+          return;
+        }
+        if (ctx.showCustomerModal) {
+          setShowCustomerModal(false);
+          playSoundEffect('beep');
+          return;
+        }
+        if (ctx.completedTx) {
+          setCompletedTx(null);
+          playSoundEffect('beep');
+          return;
+        }
+
+        if (ctx.posMode === 'direct') {
+          if (
+            ctx.directAmount !== '' ||
+            ctx.directItems.length > 0 ||
+            ctx.directQuantity !== 1 ||
+            directCashReceived !== ''
+          ) {
+            ctx.handleClearDirectTicket();
+            setGlobalNotice({ message: 'Vente en cours annulée et ticket réinitialisé (F2).', type: 'info' });
+            setTimeout(() => {
+              setGlobalNotice((prev) => (prev?.type === 'info' ? null : prev));
+            }, 3000);
+            return;
+          }
+        } else {
+          if (ctx.cart.length > 0 || ctx.searchQuery !== '' || ctx.barcodeInput !== '' || ctx.discountTotal > 0) {
+            ctx.clearCart();
+            setSearchQuery('');
+            setBarcodeInput('');
+            setShowDiscountInput(false);
+            playSoundEffect('beep');
+            setGlobalNotice({ message: 'Panier et saisie en cours annulés (F2).', type: 'info' });
+            setTimeout(() => {
+              setGlobalNotice((prev) => (prev?.type === 'info' ? null : prev));
+            }, 3000);
+            return;
+          }
+        }
+
+        const activeRecent =
+          (ctx.lastSaleTx && ctx.lastSaleTx.status !== 'cancelled' ? ctx.lastSaleTx : null) ||
+          ctx.recentTransactions.find((t) => t.status !== 'cancelled');
+        if (activeRecent) {
+          playSoundEffect('beep');
+          setSelectedTxForCancel(activeRecent);
+        } else {
+          playSoundEffect('beep');
+          setShowRecentSalesModal(true);
+        }
+      } else if (e.key === 'F3') {
+        // F3: Ajouter une quantité (+1)
+        e.preventDefault();
+        if (hasBlockingModal) return;
+        if (ctx.posMode === 'direct') {
+          if (ctx.numDirectAmount > 0 || ctx.directItems.length === 0) {
+            setDirectQuantity((q) => q + 1);
+            playSoundEffect('beep');
+          } else {
+            const lastItem = ctx.directItems[ctx.directItems.length - 1];
+            ctx.handleUpdateDirectItemQuantity(lastItem.id, 1);
+          }
+        } else {
+          if (ctx.cart.length > 0) {
+            const lastCartItem = ctx.cart[ctx.cart.length - 1];
+            ctx.updateQuantity(lastCartItem.product.id, 1);
+          } else {
+            playSoundEffect('error');
+            showErrorNotice('Panier vide : sélectionnez d’abord un article pour ajouter une quantité (F3).');
+          }
+        }
       } else if (e.key === 'F5') {
         // Toggle between Catalogue and Caisse Rapide
         e.preventDefault();
         setPosMode((prev) => (prev === 'catalog' ? 'direct' : 'catalog'));
         playSoundEffect('beep');
-      } else if (e.key === 'F2') {
+      } else if (e.key === 'F6') {
+        // Focus Libellé Article (Caisse Rapide) or Recherche (Catalogue)
         e.preventDefault();
-        if (posMode === 'direct') {
+        if (ctx.posMode === 'direct') {
           directLabelInputRef.current?.focus();
           directLabelInputRef.current?.select();
-          playSoundEffect('beep');
         } else {
           searchInputRef.current?.focus();
           searchInputRef.current?.select();
         }
-      } else if (e.key === 'F6') {
-        // Dedicated shortcut for Libellé Article
-        e.preventDefault();
-        if (posMode !== 'direct') {
-          setPosMode('direct');
-        }
-        setTimeout(() => {
-          directLabelInputRef.current?.focus();
-          directLabelInputRef.current?.select();
-        }, 50);
         playSoundEffect('beep');
-      } else if (e.key === 'F7' && posMode === 'direct') {
-        // Quick quantity increment shortcut
+      } else if (e.key === 'F7') {
+        // Toggle Camera Barcode Scanner
         e.preventDefault();
-        setDirectQuantity((q) => (q >= 12 ? 1 : q + 1));
+        setShowCameraScannerModal((prev) => !prev);
         playSoundEffect('beep');
-      } else if (posMode === 'direct' && e.altKey && !e.ctrlKey && !e.metaKey) {
+      } else if (ctx.posMode === 'direct' && e.altKey && !e.ctrlKey && !e.metaKey) {
         // Quick label presets via Alt+1 to Alt+6
         let digit = parseInt(e.key, 10);
         if (isNaN(digit)) {
@@ -278,19 +441,15 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
             directInputRef.current?.focus();
           }
         }
-      } else if (e.key === 'F3') {
-        e.preventDefault();
-        setShowCameraScannerModal((prev) => !prev);
-        playSoundEffect('beep');
       } else if (e.key === 'F4') {
         e.preventDefault();
         setShowCustomerModal((prev) => !prev);
-      } else if (e.key === 'F8' && posMode === 'catalog') {
+      } else if (e.key === 'F8' && ctx.posMode === 'catalog') {
         e.preventDefault();
         setShowDiscountInput((prev) => !prev);
       } else if (e.key === 'F9') {
         e.preventDefault();
-        if (posMode === 'catalog') {
+        if (ctx.posMode === 'catalog') {
           setPaymentMethod('cash');
           cashInputRef.current?.focus();
         } else {
@@ -300,7 +459,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         playSoundEffect('beep');
       } else if (e.key === 'F10') {
         e.preventDefault();
-        if (posMode === 'catalog') {
+        if (ctx.posMode === 'catalog') {
           setPaymentMethod('mobile_money');
         } else {
           setDirectPaymentMethod('mobile_money');
@@ -308,7 +467,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         playSoundEffect('beep');
       } else if (e.key === 'F11') {
         e.preventDefault();
-        if (posMode === 'catalog') {
+        if (ctx.posMode === 'catalog') {
           setPaymentMethod('card');
         } else {
           setDirectPaymentMethod('card');
@@ -316,22 +475,25 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         playSoundEffect('beep');
       } else if (e.key === 'F12') {
         e.preventDefault();
-        handlePrintTicket();
+        ctx.handlePrintTicket();
+      } else if (e.key === '?' && !isInputActive) {
+        e.preventDefault();
+        setShowShortcutsModal((prev) => !prev);
       } else if (e.key === 'Escape') {
-        if (selectedTxForCancel !== null) setSelectedTxForCancel(null);
-        else if (barcodeToCreate !== null) setBarcodeToCreate(null);
-        else if (showRecentSalesModal) setShowRecentSalesModal(false);
-        else if (showCameraScannerModal) {
+        if (ctx.selectedTxForCancel !== null) setSelectedTxForCancel(null);
+        else if (ctx.barcodeToCreate !== null) setBarcodeToCreate(null);
+        else if (ctx.showRecentSalesModal) setShowRecentSalesModal(false);
+        else if (ctx.showCameraScannerModal) {
           setShowCameraScannerModal(false);
           setCameraScanPurpose('sale');
         }
-        else if (showShortcutsModal) setShowShortcutsModal(false);
-        else if (showCustomerModal) setShowCustomerModal(false);
-        else if (completedTx) setCompletedTx(null);
-        else if (posMode === 'direct') {
-          if (directAmount !== '') {
+        else if (ctx.showShortcutsModal) setShowShortcutsModal(false);
+        else if (ctx.showCustomerModal) setShowCustomerModal(false);
+        else if (ctx.completedTx) setCompletedTx(null);
+        else if (ctx.posMode === 'direct') {
+          if (ctx.directAmount !== '') {
             setDirectAmount('');
-          } else if (directItems.length > 0) {
+          } else if (ctx.directItems.length > 0) {
             setDirectItems([]);
           }
           setDirectCashReceived('');
@@ -339,41 +501,41 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
           setSearchQuery('');
           setBarcodeInput('');
         }
-      } else if ((e.key === '+' || e.key === '=') && posMode === 'direct' && !isInputActive) {
+      } else if ((e.key === '+' || e.key === '=') && ctx.posMode === 'direct' && !isInputActive) {
         // Key +: Add current amount to ticket
         e.preventDefault();
-        handleAddDirectItem();
+        ctx.handleAddDirectItem();
       } else if (e.key === ' ' && !isInputActive) {
         // Space key: exact tender
         e.preventDefault();
-        if (posMode === 'catalog' && cart.length > 0) {
-          setAmountReceived(String(cartTotal));
+        if (ctx.posMode === 'catalog' && ctx.cart.length > 0) {
+          setAmountReceived(String(ctx.cartTotal));
           playSoundEffect('beep');
-        } else if (posMode === 'direct' && totalDirectToPay > 0) {
-          setDirectCashReceived(String(totalDirectToPay));
+        } else if (ctx.posMode === 'direct' && ctx.totalDirectToPay > 0) {
+          setDirectCashReceived(String(ctx.totalDirectToPay));
           playSoundEffect('beep');
         }
-      } else if (e.key === 'Enter' && !isInputActive) {
+      } else if (e.key === 'Enter' && !isInputActive && !hasBlockingModal) {
         // Enter key: Validate without printing (ultra-fast). Shift+Enter or Ctrl+Enter: Validate & Print.
         e.preventDefault();
         const shouldPrint = e.shiftKey || e.ctrlKey;
-        if (posMode === 'catalog') {
-          handleValidateSale(shouldPrint);
+        if (ctx.posMode === 'catalog') {
+          ctx.handleValidateSale(shouldPrint);
         } else {
-          handleValidateDirectSale(shouldPrint);
+          ctx.handleValidateDirectSale(shouldPrint);
         }
-      } else if (posMode === 'direct' && !isInputActive) {
+      } else if (ctx.posMode === 'direct' && !isInputActive && !hasBlockingModal) {
         // Handle direct numeric keyboard entry if directInputRef is not already focused
         if (document.activeElement !== directInputRef.current) {
           if (e.key >= '0' && e.key <= '9') {
             e.preventDefault();
-            handleDirectNumpadPress(e.key);
+            ctx.handleDirectNumpadPress(e.key);
           } else if (e.key === 'Backspace') {
             e.preventDefault();
-            handleDirectNumpadPress('backspace');
+            ctx.handleDirectNumpadPress('backspace');
           } else if (e.key.toLowerCase() === 'c') {
             e.preventDefault();
-            handleDirectNumpadPress('clear');
+            ctx.handleDirectNumpadPress('clear');
           }
         }
       }
@@ -381,26 +543,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [
-    posMode,
-    cart,
-    cartTotal,
-    paymentMethod,
-    amountReceived,
-    directAmount,
-    numDirectAmount,
-    directItems,
-    totalDirectToPay,
-    directLabel,
-    directQuantity,
-    directPaymentMethod,
-    directCashReceived,
-    directCustomerName,
-    directCustomerPhone,
-    showShortcutsModal,
-    showCustomerModal,
-    completedTx,
-  ]);
+  }, [directCashReceived]);
 
   // Mode Catalogue: Add product to cart
   const addToCart = (product: Product, qty: number = 1) => {
@@ -975,6 +1118,40 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
   const recentTransactions = store.getTransactions(business.id).slice(0, 5);
 
+  keyboardContextRef.current = {
+    posMode,
+    cart,
+    cartTotal,
+    discountTotal,
+    searchQuery,
+    barcodeInput,
+    isProcessing,
+    directAmount,
+    numDirectAmount,
+    directItems,
+    totalDirectToPay,
+    directQuantity,
+    lastSaleTx,
+    recentTransactions,
+    showShortcutsModal,
+    showCustomerModal,
+    showCameraScannerModal,
+    showRecentSalesModal,
+    showBlePrinterModal,
+    selectedTxForCancel,
+    barcodeToCreate,
+    completedTx,
+    handleValidateSale,
+    handleValidateDirectSale,
+    handleClearDirectTicket,
+    clearCart,
+    handleAddDirectItem,
+    handleUpdateDirectItemQuantity,
+    updateQuantity,
+    handleDirectNumpadPress,
+    handlePrintTicket,
+  };
+
   return (
     <div
       className={`flex-1 flex flex-col min-h-0 overflow-y-auto lg:overflow-hidden select-none transition-colors duration-200 ${
@@ -1031,7 +1208,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
 
         {/* Right Tools: Scanner Caméra + Douchette USB Status + Print Ticket + Keyboard Shortcut */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Bouton Scanner Caméra (F3) */}
+          {/* Bouton Scanner Caméra (F7) */}
           <button
             type="button"
             onClick={() => setShowCameraScannerModal(true)}
@@ -1040,14 +1217,14 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-2xs'
                 : 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border-cyan-400/50 shadow-[0_0_12px_rgba(0,242,254,0.2)]'
             }`}
-            title="Activer le scanner de code-barres par caméra (F3)"
+            title="Activer le scanner de code-barres par caméra (F7)"
           >
             <Camera className="w-3.5 h-3.5" />
             <span>Scan Caméra</span>
             <kbd className={`text-[10px] font-mono px-1 rounded ${
               isLight ? 'bg-amber-600 text-white' : 'bg-cyan-950 text-cyan-300 border border-cyan-500/30'
             }`}>
-              F3
+              F7
             </kbd>
           </button>
 
@@ -1086,39 +1263,69 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200 shadow-2xs'
                 : 'bg-rose-950/30 hover:bg-rose-950/50 text-rose-300 border-rose-500/30'
             }`}
-            title="Consulter les ventes récentes et annuler un ticket avec justification"
+            title="Annuler (F2) ou consulter l'historique des ventes"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>Historique / Annuler</span>
+            <span className="text-[10px] font-mono opacity-70">F2</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowBlePrinterModal(true)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 cursor-pointer ${
+              ble.connected
+                ? isLight
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 shadow-2xs'
+                  : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 border-cyan-300 font-black shadow-[0_0_12px_rgba(0,242,254,0.3)]'
+                : isLight
+                ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 shadow-2xs'
+                : 'bg-[#0e1428] hover:bg-[#141b36] text-cyan-300 border-cyan-500/30'
+            }`}
+            title={
+              ble.connected
+                ? `Imprimante BLE connectée : ${ble.deviceName} (${ble.paperWidth})`
+                : `Configurer une imprimante Bluetooth POS (Format actif : ${ble.paperWidth})`
+            }
+          >
+            {ble.connected ? (
+              <BluetoothConnected className="w-3.5 h-3.5" />
+            ) : (
+              <Bluetooth className="w-3.5 h-3.5" />
+            )}
+            <span>BLE {ble.paperWidth}</span>
+            {ble.connected && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            )}
           </button>
 
           <button
             type="button"
             onClick={handlePrintTicket}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 ${
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 cursor-pointer ${
               isLight
                 ? 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-2xs'
                 : 'bg-[#0e1428] hover:bg-[#141b36] text-cyan-300 border-cyan-500/40 shadow-[0_0_10px_rgba(0,242,254,0.15)]'
             }`}
-            title="Imprimer le dernier ticket (F12)"
+            title={`Imprimer le dernier ticket en ${ble.paperWidth} (F12)`}
           >
             <Printer className={`w-3.5 h-3.5 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
-            <span>Imprimer ticket</span>
+            <span>Imprimer ({ble.paperWidth})</span>
             <span className="text-[10px] font-mono opacity-70">F12</span>
           </button>
 
           <button
             onClick={() => setShowShortcutsModal(true)}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border whitespace-nowrap shrink-0 ${
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border whitespace-nowrap shrink-0 cursor-pointer ${
               isLight
                 ? 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
                 : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border-neutral-700'
             }`}
-            title="Raccourcis Clavier (F1)"
+            title="Raccourcis Clavier (?) — F1 Valider · F2 Annuler · F3 +Qté"
           >
             <Keyboard className="w-3.5 h-3.5 text-amber-500" />
             <span className="hidden sm:inline">Raccourcis</span>
-            <span className="text-[10px] font-mono opacity-60">F1</span>
+            <span className="text-[10px] font-mono opacity-60">?</span>
           </button>
         </div>
       </div>
@@ -1355,10 +1562,10 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                       ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600'
                       : 'bg-cyan-500 hover:bg-cyan-400 text-neutral-950 border-cyan-400 shadow-[0_0_8px_rgba(0,242,254,0.3)]'
                   }`}
-                  title="Scanner en rafale avec la caméra pour ajouter directement au ticket [F3]"
+                  title="Scanner en rafale avec la caméra pour ajouter directement au ticket [F7]"
                 >
                   <Camera className="w-3.5 h-3.5" />
-                  <span>Caméra [F3]</span>
+                  <span>Caméra [F7]</span>
                 </button>
 
                 <button
@@ -1414,7 +1621,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
               )}
 
               <div className="flex flex-wrap items-center gap-1.5">
-                {/* Libellé input avec raccourci F2 */}
+                {/* Libellé input avec raccourci F6 */}
                 <div className="flex-1 min-w-[140px] relative">
                   <div className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center gap-1">
                     <Tag className="w-3 h-3 text-amber-500" />
@@ -1451,7 +1658,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                         playSoundEffect('beep');
                       }
                     }}
-                    placeholder="Libellé article (Pain, Boisson, Télécom...) [F2]"
+                    placeholder="Libellé article (Pain, Boisson, Télécom...) [F6]"
                     className={`w-full pl-7 pr-8 py-1 text-xs font-semibold rounded-lg border transition-all ${
                       isLight
                         ? 'bg-slate-50 border-slate-300 text-slate-900 focus:outline-hidden focus:border-amber-500 focus:bg-white'
@@ -1465,14 +1672,14 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                           ? 'bg-slate-200/80 text-slate-600 border-slate-300'
                           : 'bg-neutral-800 text-cyan-300 border-neutral-700'
                       }`}
-                      title="Raccourci clavier F2 (ou F6)"
+                      title="Raccourci clavier F6"
                     >
-                      F2
+                      F6
                     </kbd>
                   </div>
                 </div>
 
-                {/* Quantité Stepper avec raccourci F7 */}
+                {/* Quantité Stepper avec raccourci F3 */}
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
@@ -1504,7 +1711,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                           ? 'bg-slate-50 border-slate-300 text-slate-900 focus:outline-hidden focus:border-amber-500'
                           : 'bg-neutral-950 border-cyan-500/30 text-white focus:outline-hidden focus:border-cyan-400'
                       }`}
-                      title="Quantité d'articles [F7 pour augmenter]"
+                      title="Quantité d'articles [F3 pour augmenter]"
                     />
                   </div>
                   <button
@@ -1513,14 +1720,15 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                       setDirectQuantity((q) => q + 1);
                       playSoundEffect('beep');
                     }}
-                    className={`w-7 h-7 rounded-lg font-bold flex items-center justify-center border transition-all cursor-pointer ${
+                    className={`h-7 px-2 rounded-lg font-bold flex items-center justify-center gap-1 border transition-all cursor-pointer ${
                       isLight
                         ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
                         : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-cyan-500/30'
                     }`}
-                    title="Augmenter la quantité (+1) [F7]"
+                    title="Ajouter une quantité (+1) [F3]"
                   >
                     <Plus className="w-3 h-3" />
+                    <span className="text-[9px] font-mono opacity-80">F3</span>
                   </button>
                 </div>
 
@@ -1596,7 +1804,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                           ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
                           : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-800'
                       }`}
-                      title={`Quantité ${q} (Raccourci F7)`}
+                      title={`Quantité ${q} (Raccourci F3 pour +1)`}
                     >
                       x{q}
                     </button>
@@ -1881,16 +2089,16 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                     ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30'
                     : 'bg-gradient-to-r from-emerald-400 via-cyan-400 to-emerald-400 text-neutral-950 font-black shadow-[0_0_20px_rgba(16,185,129,0.5)]'
                 }`}
-                title="Encaisser et valider immédiatement sans imprimer de ticket (Touche Entrée ↵)"
+                title="Valider la vente immédiatement (Touche F1 ou Entrée ↵)"
               >
                 <div className="flex items-center gap-1.5 sm:gap-2">
                   <Check className="w-5 h-5 stroke-[3] shrink-0" />
                   <div className="text-left">
                     <span className="block leading-tight font-black uppercase text-[11px] sm:text-xs tracking-wide">
-                      VALIDER SANS IMPRIMER
+                      VALIDER LA VENTE [F1]
                     </span>
                     <span className="text-[9px] sm:text-[10px] font-normal opacity-90 block">
-                      Enregistrement immédiat [Entrée ↵]
+                      Enregistrement immédiat [F1 / Entrée ↵]
                     </span>
                   </div>
                 </div>
@@ -2272,15 +2480,29 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                           )}
                           <button
                             type="button"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
                               setCompletedTx(tx);
-                              printThermalReceipt(tx, business);
+                              try {
+                                const res = await printThermalReceipt(tx, business, {
+                                  paperWidth: ble.paperWidth,
+                                });
+                                if (res.method === 'bluetooth') {
+                                  playSoundEffect('cash');
+                                  setGlobalNotice({
+                                    message: `Ticket ${tx.ticketNumber} imprimé en Bluetooth (${res.paperWidth}) sur ${res.deviceName || 'Imprimante BLE'}.`,
+                                    type: 'success',
+                                  });
+                                  setTimeout(() => setGlobalNotice(null), 3500);
+                                }
+                              } catch (err) {
+                                console.error('Erreur impression rapide:', err);
+                              }
                             }}
                             className={`p-1 rounded transition-colors cursor-pointer ${
                               isLight ? 'hover:bg-slate-200 text-slate-700' : 'hover:bg-neutral-800 text-cyan-300'
                             }`}
-                            title="Imprimer ce ticket (80mm)"
+                            title={`Imprimer ce ticket (${ble.paperWidth}${ble.connected ? ' · Bluetooth' : ''})`}
                           >
                             <Printer className="w-3 h-3" />
                           </button>
@@ -2312,7 +2534,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                 isLight ? 'bg-white border-slate-200 shadow-2xs' : 'bg-[#090d1c] border-cyan-500/20'
               }`}
             >
-              {/* Product search (F2) */}
+              {/* Product search (F6) */}
               <div className="relative flex-1 min-w-[200px]">
                 <Search
                   className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${
@@ -2324,7 +2546,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Rechercher produit (F2)..."
+                  placeholder="Rechercher produit (F6)..."
                   className={`w-full pl-9 pr-14 py-2 rounded-lg text-xs transition-colors focus:outline-hidden ${
                     isLight
                       ? 'bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-amber-500 focus:bg-white'
@@ -2338,11 +2560,11 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                       : 'text-neutral-400 bg-neutral-900 border-neutral-800'
                   }`}
                 >
-                  F2
+                  F6
                 </span>
               </div>
 
-              {/* Barcode scanner input and Camera Scan button (F3) */}
+              {/* Barcode scanner input and Camera Scan button (F7) */}
               <div className="flex items-center gap-1.5 flex-1 min-w-[260px]">
                 <form onSubmit={handleBarcodeSubmit} className="relative flex-1">
                   <Barcode
@@ -2385,10 +2607,10 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                       ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-2xs'
                       : 'bg-cyan-500 hover:bg-cyan-400 text-neutral-950 border-cyan-400 shadow-[0_0_12px_rgba(0,242,254,0.35)]'
                   }`}
-                  title="Ouvrir le lecteur caméra [F3]"
+                  title="Ouvrir le lecteur caméra [F7]"
                 >
                   <Camera className="w-3.5 h-3.5" />
-                  <span>Caméra [F3]</span>
+                  <span>Caméra [F7]</span>
                 </button>
 
                 <button
@@ -2764,15 +2986,15 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
                       ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
                       : 'bg-gradient-to-r from-emerald-400 via-cyan-400 to-emerald-400 text-neutral-950 font-black shadow-[0_0_20px_rgba(16,185,129,0.5)]'
                   }`}
-                  title="Valider la vente sans impression (Touche Entrée ↵)"
+                  title="Valider la vente sans impression (Touche F1 ou Entrée ↵)"
                 >
                   <Check className="w-4 h-4 sm:w-5 sm:h-5 stroke-[3] shrink-0" />
                   <div className="text-left leading-tight">
                     <span className="block font-black uppercase text-[11px] sm:text-xs tracking-wide">
-                      VALIDER SANS IMPRIMER
+                      VALIDER LA VENTE [F1]
                     </span>
                     <span className="text-[9px] font-normal opacity-90 block">
-                      Enregistrement immédiat [Entrée]
+                      Enregistrement immédiat [F1 / Entrée]
                     </span>
                   </div>
                 </button>
@@ -3002,6 +3224,12 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
           }}
         />
       )}
+      {/* Bluetooth POS 58/80mm Printer Configuration Modal */}
+      <BluetoothPrinterModal
+        isOpen={showBlePrinterModal}
+        business={business}
+        onClose={() => setShowBlePrinterModal(false)}
+      />
     </div>
   );
 };

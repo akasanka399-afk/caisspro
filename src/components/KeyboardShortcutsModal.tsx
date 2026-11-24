@@ -11,15 +11,16 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({ 
   const isLight = theme === 'light';
 
   const shortcuts = [
-    { key: 'F1', desc: 'Ouvrir ce guide des raccourcis clavier' },
-    { key: 'F2 / F6', desc: 'Caisse Rapide : Saisir le libellé de l\'article (ou recherche en Catalogue)' },
-    { key: 'Alt + 1 à 6', desc: 'Caisse Rapide : Choisir un modèle de libellé (Télécom, Pain, Boisson...)' },
-    { key: '↓ / ↑', desc: 'Dans le champ libellé : Défiler les modèles d\'articles sans la souris' },
-    { key: 'F7', desc: 'Caisse Rapide : Augmenter la quantité d\'articles (+1)' },
-    { key: '+', desc: 'Caisse Rapide : Ajouter montant et quantité au ticket cumulé' },
-    { key: 'F3', desc: 'Ouvrir le lecteur de code-barres Caméra (ou douchette USB directe)' },
+    { key: 'F1', desc: 'Valider la vente en cours (Shift+F1 pour valider et imprimer)' },
+    { key: 'F2', desc: 'Annuler la saisie / ticket en cours ou ouvrir l\'annulation d\'une vente' },
+    { key: 'F3', desc: 'Ajouter une quantité (+1) sur l\'article actif ou le dernier article' },
     { key: 'F4', desc: 'Sélectionner ou saisir le client (figurera sur le reçu)' },
     { key: 'F5', desc: 'Basculer entre Caisse Rapide et Catalogue' },
+    { key: 'F6', desc: 'Caisse Rapide : Libellé de l\'article (ou recherche en Catalogue)' },
+    { key: 'F7', desc: 'Ouvrir le lecteur de code-barres Caméra (ou douchette USB directe)' },
+    { key: 'Alt + 1 à 6', desc: 'Caisse Rapide : Choisir un modèle de libellé (Télécom, Pain, Boisson...)' },
+    { key: '↓ / ↑', desc: 'Dans le champ libellé : Défiler les modèles d\'articles sans la souris' },
+    { key: '+', desc: 'Caisse Rapide : Ajouter montant et quantité au ticket cumulé' },
     { key: 'F8', desc: 'Catalogue : Appliquer une remise sur le ticket' },
     { key: 'F9', desc: 'Règlement rapide en Espèces (Cash)' },
     { key: 'F10', desc: 'Règlement Mobile Money (Wave / Orange)' },
@@ -28,7 +29,7 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({ 
     { key: 'Entrée', desc: 'Valider SANS imprimer (encaissement immédiat ultra-rapide)' },
     { key: 'Shift + Entrée', desc: 'Valider ET imprimer le ticket thermique (ou Ctrl+Entrée)' },
     { key: 'Espace', desc: 'Appoint exact (espèces reçues = total à payer)' },
-    { key: 'Échap', desc: 'Annuler / Retour au montant ou vider le ticket' },
+    { key: 'Échap / ?', desc: 'Échap : Fermer/effacer · ? : Ouvrir ce guide des raccourcis' },
   ];
 
   return (

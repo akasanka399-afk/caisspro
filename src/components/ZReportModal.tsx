@@ -14,10 +14,14 @@ import {
   Smartphone,
   TrendingUp,
   FileText,
+  Bluetooth,
+  BluetoothConnected,
 } from 'lucide-react';
 import { Business, CashRegisterSession } from '../types';
 import { formatMoney, formatDate } from '../utils/formatters';
 import { printThermalZReport, copyZReportToClipboard } from '../utils/printReceipt';
+import { bluetoothPrinter, PaperWidth, useBluetoothPrinter } from '../services/bluetoothPrinter';
+import { BluetoothPrinterModal } from './BluetoothPrinterModal';
 
 interface ZReportModalProps {
   session: CashRegisterSession;
@@ -32,8 +36,12 @@ export const ZReportModal: React.FC<ZReportModalProps> = ({
   isLight,
   onClose,
 }) => {
+  const ble = useBluetoothPrinter();
   const [copied, setCopied] = useState<boolean>(false);
   const [isPrinting, setIsPrinting] = useState<boolean>(false);
+  const [isPrintingBle, setIsPrintingBle] = useState<boolean>(false);
+  const [showBleModal, setShowBleModal] = useState<boolean>(false);
+  const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
 
   const cur = business.currency || 'FCFA';
   const diff = session.cashDifference || 0;
@@ -46,15 +54,50 @@ export const ZReportModal: React.FC<ZReportModalProps> = ({
       ? Math.round(session.totalSalesAmount / session.totalSalesCount)
       : 0;
 
+  const showFeedback = (message: string, type: 'success' | 'info' = 'success') => {
+    setFeedback({ message, type });
+    setTimeout(() => setFeedback(null), 4000);
+  };
+
   const handlePrint = async () => {
     setIsPrinting(true);
     try {
-      await printThermalZReport(session, business);
+      const result = await printThermalZReport(session, business, { paperWidth: ble.paperWidth });
+      if (result.method === 'bluetooth') {
+        showFeedback(
+          `Rapport Z imprimé en Bluetooth (${result.paperWidth}) sur ${result.deviceName || 'Imprimante BLE'}`,
+          'success'
+        );
+      } else {
+        showFeedback(`Rapport Z envoyé à l'imprimante (${result.paperWidth})`, 'success');
+      }
     } catch (e) {
       console.error('Erreur impression Z:', e);
       window.print();
     } finally {
       setIsPrinting(false);
+    }
+  };
+
+  const handlePrintBle = async () => {
+    if (!bluetoothPrinter.isConnected()) {
+      setShowBleModal(true);
+      return;
+    }
+    setIsPrintingBle(true);
+    try {
+      const result = await printThermalZReport(session, business, {
+        paperWidth: ble.paperWidth,
+        forceBluetooth: true,
+      });
+      showFeedback(
+        `Rapport Z envoyé en Bluetooth (${result.paperWidth}) sur ${result.deviceName || 'Imprimante BLE'}`,
+        'success'
+      );
+    } catch (e) {
+      showFeedback((e as Error)?.message || "Échec d'impression Bluetooth.", 'info');
+    } finally {
+      setIsPrintingBle(false);
     }
   };
 
@@ -115,7 +158,51 @@ export const ZReportModal: React.FC<ZReportModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="hidden sm:flex items-center gap-1 mr-1">
+              {(['58mm', '80mm'] as PaperWidth[]).map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => bluetoothPrinter.setPaperWidth(w)}
+                  className={`px-2 py-1 rounded text-[11px] font-mono font-bold border cursor-pointer ${
+                    ble.paperWidth === w
+                      ? isLight
+                        ? 'bg-slate-900 text-white border-slate-900'
+                        : 'bg-cyan-400 text-neutral-950 border-cyan-400'
+                      : isLight
+                      ? 'bg-white text-slate-600 border-slate-300'
+                      : 'bg-neutral-900 text-neutral-400 border-neutral-700'
+                  }`}
+                >
+                  {w}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={handlePrintBle}
+              disabled={isPrintingBle}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                ble.connected
+                  ? isLight
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700'
+                    : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 border-cyan-300'
+                  : isLight
+                  ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
+                  : 'bg-cyan-950/50 hover:bg-cyan-900/60 text-cyan-300 border-cyan-500/40'
+              }`}
+              title="Imprimer le rapport Z en Bluetooth BLE (58/80mm)"
+            >
+              {ble.connected ? (
+                <BluetoothConnected className="w-4 h-4" />
+              ) : (
+                <Bluetooth className="w-4 h-4" />
+              )}
+              <span>{isPrintingBle ? 'BLE...' : ble.connected ? `BLE ${ble.paperWidth}` : 'BLE'}</span>
+            </button>
+
             <button
               type="button"
               onClick={handleCopyWhatsApp}
@@ -141,10 +228,10 @@ export const ZReportModal: React.FC<ZReportModalProps> = ({
                   ? 'bg-rose-600 hover:bg-rose-700 text-white border-rose-700 shadow-xs'
                   : 'bg-rose-500 hover:bg-rose-400 text-white font-bold border-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.4)]'
               }`}
-              title="Imprimer le ticket Z thermique ou A4"
+              title={`Imprimer le ticket Z thermique (${ble.paperWidth})`}
             >
               <Printer className="w-4 h-4" />
-              <span>Imprimer Z</span>
+              <span>Imprimer Z ({ble.paperWidth})</span>
             </button>
 
             <button
@@ -158,6 +245,22 @@ export const ZReportModal: React.FC<ZReportModalProps> = ({
             </button>
           </div>
         </div>
+
+        {feedback && (
+          <div
+            className={`px-4 py-2 text-xs font-semibold border-b print:hidden ${
+              feedback.type === 'success'
+                ? isLight
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : 'bg-emerald-950/50 text-emerald-300 border-emerald-800'
+                : isLight
+                ? 'bg-blue-50 text-blue-800 border-blue-200'
+                : 'bg-blue-950/50 text-blue-300 border-blue-800'
+            }`}
+          >
+            {feedback.message}
+          </div>
+        )}
 
         {/* Modal Scrollable Body (also acts as print preview) */}
         <div className="p-4 md:p-6 overflow-y-auto space-y-5 flex-1 print:p-6 print:overflow-visible">
@@ -476,6 +579,12 @@ export const ZReportModal: React.FC<ZReportModalProps> = ({
           </div>
         </div>
       </div>
+
+      <BluetoothPrinterModal
+        isOpen={showBleModal}
+        business={business}
+        onClose={() => setShowBleModal(false)}
+      />
     </div>
   );
 };

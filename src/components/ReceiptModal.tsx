@@ -16,10 +16,16 @@ import {
   Download,
   Copy,
   Check,
-  FileText,
-  Share2,
   Sparkles,
+  Bluetooth,
+  BluetoothConnected,
 } from 'lucide-react';
+import {
+  bluetoothPrinter,
+  PaperWidth,
+  useBluetoothPrinter,
+} from '../services/bluetoothPrinter';
+import { BluetoothPrinterModal } from './BluetoothPrinterModal';
 
 interface ReceiptModalProps {
   transaction: SaleTransaction;
@@ -31,7 +37,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
   const { theme } = useTheme();
   const isLight = theme === 'light';
 
+  const ble = useBluetoothPrinter();
   const [isPrinting, setIsPrinting] = useState<boolean>(false);
+  const [isPrintingBle, setIsPrintingBle] = useState<boolean>(false);
+  const [showBleModal, setShowBleModal] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
 
@@ -39,33 +48,71 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
     setFeedback({ message, type });
     setTimeout(() => {
       setFeedback(null);
-    }, 3500);
+    }, 4000);
   };
 
   const handlePrint = async () => {
     setIsPrinting(true);
     playSoundEffect('beep');
     try {
-      const result = await printThermalReceipt(transaction, business);
-      if (result.method === 'download') {
-        showFeedback('Ticket téléchargé automatiquement (prêt à imprimer)', 'info');
+      const result = await printThermalReceipt(transaction, business, {
+        paperWidth: ble.paperWidth,
+      });
+      if (result.method === 'bluetooth') {
+        playSoundEffect('cash');
+        showFeedback(
+          `Ticket imprimé en Bluetooth (${result.paperWidth}) sur ${result.deviceName || 'Imprimante BLE'}`,
+          'success'
+        );
+      } else if (result.method === 'download') {
+        showFeedback(`Ticket (${result.paperWidth}) téléchargé automatiquement`, 'info');
+      } else if (result.bleFallbackReason) {
+        showFeedback(
+          `BLE indisponible (${result.bleFallbackReason}) · Impression système (${result.paperWidth}) lancée`,
+          'info'
+        );
       } else {
-        showFeedback('Ticket envoyé à votre imprimante thermique (80mm/58mm)', 'success');
+        showFeedback(`Ticket envoyé à votre imprimante (${result.paperWidth})`, 'success');
       }
     } catch (err) {
       console.error('Erreur lors de l’impression:', err);
-      // Fallback: download HTML ticket
-      downloadReceiptHtml(transaction, business);
+      downloadReceiptHtml(transaction, business, ble.paperWidth);
       showFeedback('Fichier ticket généré et téléchargé', 'info');
     } finally {
-      setTimeout(() => setIsPrinting(false), 800);
+      setTimeout(() => setIsPrinting(false), 700);
+    }
+  };
+
+  const handlePrintBluetooth = async () => {
+    playSoundEffect('beep');
+    if (!bluetoothPrinter.isConnected()) {
+      setShowBleModal(true);
+      return;
+    }
+
+    setIsPrintingBle(true);
+    try {
+      const result = await printThermalReceipt(transaction, business, {
+        paperWidth: ble.paperWidth,
+        forceBluetooth: true,
+      });
+      playSoundEffect('cash');
+      showFeedback(
+        `Ticket envoyé en Bluetooth (${result.paperWidth}) vers ${result.deviceName || 'Imprimante BLE'}`,
+        'success'
+      );
+    } catch (err) {
+      playSoundEffect('error');
+      showFeedback((err as Error)?.message || "Échec d'impression Bluetooth.", 'info');
+    } finally {
+      setIsPrintingBle(false);
     }
   };
 
   const handleDownload = () => {
     playSoundEffect('beep');
-    downloadReceiptHtml(transaction, business);
-    showFeedback('Ticket téléchargé au format HTML prêt à imprimer', 'success');
+    downloadReceiptHtml(transaction, business, ble.paperWidth);
+    showFeedback(`Ticket (${ble.paperWidth}) téléchargé au format HTML prêt à imprimer`, 'success');
   };
 
   const handleCopyText = async () => {
@@ -151,13 +198,60 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
           </div>
         )}
 
-        {/* Format toolbar info */}
+        {/* Format toolbar: 58mm / 80mm + BLE Status + WhatsApp Copy */}
         <div
-          className={`px-4 py-2 text-[11px] flex items-center justify-between border-b ${
+          className={`px-4 py-2 text-[11px] flex flex-wrap items-center justify-between gap-2 border-b ${
             isLight ? 'bg-slate-100/70 text-slate-600 border-slate-200' : 'bg-neutral-900/90 text-neutral-400 border-neutral-800'
           }`}
         >
-          <span className="font-mono">Format Papier: 80mm / 58mm Thermique</span>
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold">Rouleau :</span>
+            {(['58mm', '80mm'] as PaperWidth[]).map((w) => {
+              const active = ble.paperWidth === w;
+              return (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => {
+                    playSoundEffect('beep');
+                    bluetoothPrinter.setPaperWidth(w);
+                  }}
+                  className={`px-2 py-0.5 rounded font-mono text-[11px] font-bold border transition-all cursor-pointer ${
+                    active
+                      ? isLight
+                        ? 'bg-slate-900 text-white border-slate-900'
+                        : 'bg-cyan-400 text-neutral-950 border-cyan-400'
+                      : isLight
+                      ? 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                      : 'bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-700'
+                  }`}
+                >
+                  {w}
+                </button>
+              );
+            })}
+
+            <button
+              type="button"
+              onClick={() => setShowBleModal(true)}
+              className={`ml-1 px-2 py-0.5 rounded text-[11px] font-bold border inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                ble.connected
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/40'
+                  : isLight
+                  ? 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50'
+                  : 'bg-neutral-800 text-cyan-300 border-cyan-500/30 hover:bg-neutral-700'
+              }`}
+              title="Configurer l'imprimante Bluetooth BLE"
+            >
+              {ble.connected ? (
+                <BluetoothConnected className="w-3 h-3" />
+              ) : (
+                <Bluetooth className="w-3 h-3" />
+              )}
+              <span>{ble.connected ? ble.deviceName || 'BLE Prête' : 'Config BLE'}</span>
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={handleCopyText}
@@ -171,19 +265,23 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
             title="Copier le texte du ticket pour WhatsApp / SMS"
           >
             {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{copied ? 'Copié !' : 'Copier pour WhatsApp'}</span>
+            <span>{copied ? 'Copié !' : 'WhatsApp'}</span>
           </button>
         </div>
 
         {/* Thermal Receipt Preview Paper */}
         <div
-          className={`p-5 flex justify-center max-h-[62vh] overflow-y-auto ${
+          className={`p-5 flex justify-center max-h-[60vh] overflow-y-auto ${
             isLight ? 'bg-slate-100' : 'bg-neutral-950'
           }`}
         >
           <div
             id="thermal-receipt-print-area"
-            className="w-full max-w-[340px] bg-white text-black p-5 rounded-md shadow-md text-xs font-sans leading-snug select-text border-2 border-black"
+            className={`w-full bg-white text-black rounded-md shadow-md font-sans leading-snug select-text border-2 border-black transition-all ${
+              ble.paperWidth === '58mm'
+                ? 'max-w-[260px] p-3.5 text-[11px]'
+                : 'max-w-[340px] p-5 text-xs'
+            }`}
             style={{ color: '#000000', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
           >
             {/* Store details */}
@@ -353,7 +451,42 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
               title="Télécharger le ticket (.html imprimable)"
             >
               <Download className="w-3.5 h-3.5 text-blue-500" />
-              <span>Télécharger (.html)</span>
+              <span>HTML</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePrintBluetooth}
+              disabled={isPrintingBle}
+              className={`px-3.5 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all whitespace-nowrap border cursor-pointer ${
+                isPrintingBle ? 'opacity-70 cursor-wait' : ''
+              } ${
+                ble.connected
+                  ? isLight
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 shadow-sm'
+                    : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 border-cyan-300 font-black'
+                  : isLight
+                  ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
+                  : 'bg-cyan-950/50 hover:bg-cyan-900/60 text-cyan-300 border-cyan-500/40'
+              }`}
+              title={
+                ble.connected
+                  ? `Imprimer directement en Bluetooth (${ble.paperWidth})`
+                  : 'Connecter une imprimante thermique Bluetooth BLE'
+              }
+            >
+              {ble.connected ? (
+                <BluetoothConnected className="w-4 h-4" />
+              ) : (
+                <Bluetooth className="w-4 h-4" />
+              )}
+              <span>
+                {isPrintingBle
+                  ? 'Envoi BLE...'
+                  : ble.connected
+                  ? `BLE (${ble.paperWidth})`
+                  : 'Bluetooth BLE'}
+              </span>
             </button>
 
             <button
@@ -361,22 +494,28 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
               onClick={handlePrint}
               disabled={isPrinting}
               className={`px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-2 transition-all whitespace-nowrap shadow-sm cursor-pointer ${
-                isPrinting
-                  ? 'opacity-70 cursor-wait'
-                  : ''
+                isPrinting ? 'opacity-70 cursor-wait' : ''
               } ${
                 isLight
                   ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20 active:scale-98'
                   : 'bg-emerald-400 hover:bg-emerald-300 text-neutral-950 neon-glow active:scale-98'
               }`}
-              title="Lancer l'impression sur votre imprimante thermique (80mm)"
+              title={`Lancer l'impression thermique (${ble.paperWidth})`}
             >
               <Printer className="w-4 h-4" />
-              <span>{isPrinting ? 'Impression en cours...' : 'Imprimer Ticket (80mm)'}</span>
+              <span>
+                {isPrinting ? 'Impression...' : `Imprimer (${ble.paperWidth})`}
+              </span>
             </button>
           </div>
         </div>
       </div>
+
+      <BluetoothPrinterModal
+        isOpen={showBleModal}
+        business={business}
+        onClose={() => setShowBleModal(false)}
+      />
     </div>
   );
 };
