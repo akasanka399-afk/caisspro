@@ -565,45 +565,120 @@ export async function deleteBusinessCascadeFromFirestore(businessId: string): Pr
   }
 }
 
+function normalizeCompactAccessCode(rawCode: string): string {
+  return rawCode
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\u2010-\u2015\u2212\-_]+/g, '');
+}
+
+function buildAccessCodeCandidates(rawCode: string): {
+  candidates: string[];
+  canonicalKey: string;
+} {
+  const rawUpper = rawCode.trim().toUpperCase();
+  const compact = normalizeCompactAccessCode(rawCode);
+  if (!compact) return { candidates: [], canonicalKey: '' };
+
+  const suffix = compact.startsWith('CP') && compact.length > 2 ? compact.slice(2) : compact;
+  const canonical = `CP-${suffix}`;
+  const canonicalKey = `CP${suffix}`;
+  const candidates = Array.from(
+    new Set([rawUpper, canonical, suffix, canonicalKey].filter(Boolean))
+  ).slice(0, 10);
+
+  return { candidates, canonicalKey };
+}
+
 /**
  * Direct Cloud lookup for a Business by its connection accessCode and its active staff (Owner/Manager/Cashier).
  */
 export async function lookupBusinessAndStaffByAccessCode(rawCode: string): Promise<{
   business?: Business;
   staff: User[];
+  error?: string;
 }> {
-  const clean = rawCode.trim().toUpperCase();
-  if (!clean) return { staff: [] };
-
-  const candidates = Array.from(
-    new Set([clean, clean.startsWith('CP-') ? clean : `CP-${clean}`])
-  );
+  const { candidates, canonicalKey } = buildAccessCodeCandidates(rawCode);
+  if (candidates.length === 0) return { staff: [] };
 
   try {
+    let business: Business | undefined;
+
     const bizQuery = query(
       collection(db, 'businesses'),
       where('accessCode', 'in', candidates)
     );
     const bizSnap = await getDocs(bizQuery);
-    if (bizSnap.empty) {
+
+    if (!bizSnap.empty) {
+      const docSnap = bizSnap.docs[0];
+      const rawBiz = docSnap.data() as Business;
+      business = { ...rawBiz, id: rawBiz.id || docSnap.id };
+    } else {
+      // Fallback scan over active/trial businesses in case stored code has formatting differences (spaces/lowercase)
+      const allBizSnap = await getDocs(
+        query(
+          collection(db, 'businesses'),
+          where('subscriptionStatus', 'in', ['active', 'trial', 'suspended', 'expired'])
+        )
+      );
+      allBizSnap.forEach((docSnap) => {
+        if (business) return;
+        const rawBiz = docSnap.data() as Business;
+        const storedCompact = normalizeCompactAccessCode(rawBiz.accessCode || '');
+        const storedCanonical =
+          storedCompact.startsWith('CP') && storedCompact.length > 2
+            ? storedCompact
+            : `CP${storedCompact}`;
+        if (storedCanonical === canonicalKey || storedCompact === canonicalKey) {
+          business = { ...rawBiz, id: rawBiz.id || docSnap.id };
+        }
+      });
+    }
+
+    if (!business) {
       return { staff: [] };
     }
 
-    const business = bizSnap.docs[0].data() as Business;
-
-    const staffQuery = query(
-      collection(db, 'users'),
-      where('businessId', '==', business.id),
-      where('role', 'in', ['owner', 'manager', 'cashier'])
-    );
-    const staffSnap = await getDocs(staffQuery);
-    const staff: User[] = [];
-    staffSnap.forEach((d) => {
-      const u = d.data() as User;
-      if (u.status === 'active') {
-        staff.push(u);
+    const staffMap = new Map<string, User>();
+    const collectStaffDoc = (docId: string, rawUser: User) => {
+      const uid = rawUser.id || docId;
+      const status = rawUser.status || 'active';
+      if (
+        uid &&
+        rawUser.businessId === business!.id &&
+        status !== 'suspended' &&
+        (rawUser.role === 'owner' || rawUser.role === 'manager' || rawUser.role === 'cashier')
+      ) {
+        staffMap.set(uid, { ...rawUser, id: uid, status });
       }
-    });
+    };
+
+    try {
+      const staffQuery = query(
+        collection(db, 'users'),
+        where('businessId', '==', business.id),
+        where('role', 'in', ['owner', 'manager', 'cashier'])
+      );
+      const staffSnap = await getDocs(staffQuery);
+      staffSnap.forEach((d) => collectStaffDoc(d.id, d.data() as User));
+    } catch (staffErr: any) {
+      console.warn('[FirebaseSync] Compound staff query fallback triggered:', staffErr?.message || staffErr);
+    }
+
+    // Fallback single-field role query (no composite index required) if compound query returned empty or errored
+    if (staffMap.size === 0) {
+      try {
+        const roleOnlyQuery = query(
+          collection(db, 'users'),
+          where('role', 'in', ['owner', 'manager', 'cashier'])
+        );
+        const roleOnlySnap = await getDocs(roleOnlyQuery);
+        roleOnlySnap.forEach((d) => collectStaffDoc(d.id, d.data() as User));
+      } catch (fallbackErr: any) {
+        console.warn('[FirebaseSync] Role-only staff fallback notice:', fallbackErr?.message || fallbackErr);
+      }
+    }
 
     updateSyncState({
       isOnline: true,
@@ -612,10 +687,13 @@ export async function lookupBusinessAndStaffByAccessCode(rawCode: string): Promi
       error: null,
     });
 
-    return { business, staff };
+    return { business, staff: Array.from(staffMap.values()) };
   } catch (err: any) {
     console.warn('[FirebaseSync] lookupBusinessAndStaffByAccessCode notice:', err?.message || err);
-    return { staff: [] };
+    return {
+      staff: [],
+      error: err?.code === 'unavailable' ? 'Serveur Cloud temporairement inaccessible.' : undefined,
+    };
   }
 }
 

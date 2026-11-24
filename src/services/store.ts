@@ -1788,21 +1788,44 @@ class StoreService {
     return newCode;
   }
 
+  private normalizeAccessCodeKey(rawCode?: string): string {
+    if (!rawCode) return '';
+    const compact = rawCode
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\u2010-\u2015\u2212\-_]+/g, '');
+    if (!compact) return '';
+    const suffix = compact.startsWith('CP') && compact.length > 2 ? compact.slice(2) : compact;
+    return `CP${suffix}`;
+  }
+
   public getBusinessByAccessCode(rawCode: string): Business | undefined {
-    if (!rawCode || !rawCode.trim()) return undefined;
-    const clean = rawCode.trim().toUpperCase();
-    const normalized = clean.startsWith('CP-') ? clean : `CP-${clean}`;
+    const targetKey = this.normalizeAccessCodeKey(rawCode);
+    if (!targetKey) return undefined;
+    const rawCompact = rawCode
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\u2010-\u2015\u2212\-_]+/g, '');
+
     const businesses = this.getBusinesses();
-    return businesses.find(
-      (b) =>
-        b.accessCode?.toUpperCase() === clean ||
-        b.accessCode?.toUpperCase() === normalized ||
-        b.accessCode?.replace('CP-', '') === clean
-    );
+    return businesses.find((b) => {
+      if (!b.accessCode) return false;
+      const storedKey = this.normalizeAccessCodeKey(b.accessCode);
+      const storedCompact = b.accessCode
+        .trim()
+        .toUpperCase()
+        .replace(/[\s\u2010-\u2015\u2212\-_]+/g, '');
+      return storedKey === targetKey || storedCompact === rawCompact;
+    });
   }
 
   public getUsersByBusinessId(businessId: string): User[] {
-    return this.getUsers().filter((u) => u.businessId === businessId && u.status === 'active');
+    return this.getUsers().filter(
+      (u) =>
+        u.businessId === businessId &&
+        u.status !== 'suspended' &&
+        (u.role === 'owner' || u.role === 'manager' || u.role === 'cashier')
+    );
   }
 
   /**
@@ -1812,6 +1835,7 @@ class StoreService {
   public async fetchBusinessAndStaffByAccessCode(rawCode: string): Promise<{
     business?: Business;
     staff: User[];
+    error?: string;
   }> {
     const localBiz = this.getBusinessByAccessCode(rawCode);
     const localStaff = localBiz ? this.getUsersByBusinessId(localBiz.id) : [];
@@ -1821,8 +1845,14 @@ class StoreService {
       const mergedBusinesses = this.mergeRemoteItemsById(this.getBusinesses(), [remote.business]);
       localStorage.setItem(STORAGE_KEYS.BUSINESSES, JSON.stringify(mergedBusinesses));
 
-      if (remote.staff.length > 0) {
-        const mergedUsers = this.mergeRemoteItemsById(this.getUsers(), remote.staff);
+      const fallbackSeedStaff =
+        remote.staff.length === 0
+          ? SEED_USERS.filter((u) => u.businessId === remote.business!.id && u.status !== 'suspended')
+          : [];
+      const staffToMerge = remote.staff.length > 0 ? remote.staff : fallbackSeedStaff;
+
+      if (staffToMerge.length > 0) {
+        const mergedUsers = this.mergeRemoteItemsById(this.getUsers(), staffToMerge);
         localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(mergedUsers));
       }
 
@@ -1830,13 +1860,15 @@ class StoreService {
       const updatedStaff = this.getUsersByBusinessId(remote.business.id);
       return {
         business: remote.business,
-        staff: updatedStaff.length > 0 ? updatedStaff : remote.staff,
+        staff: updatedStaff.length > 0 ? updatedStaff : staffToMerge,
+        error: remote.error,
       };
     }
 
     return {
       business: localBiz,
       staff: localStaff,
+      error: remote.error,
     };
   }
 
