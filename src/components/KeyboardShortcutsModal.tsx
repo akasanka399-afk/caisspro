@@ -26,6 +26,7 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({ 
     { key: 'F10', desc: 'Règlement Mobile Money (Wave / Orange)' },
     { key: 'F11', desc: 'Règlement Carte Bancaire' },
     { key: 'F12', desc: 'Imprimer / Réimprimer le dernier ticket de caisse' },
+    { key: 'Ctrl + B', desc: 'Impression Bluetooth BLE rapide (ou Shift + F12) · 58/80 mm' },
     { key: 'Entrée', desc: 'Valider SANS imprimer (encaissement immédiat ultra-rapide)' },
     { key: 'Shift + Entrée', desc: 'Valider ET imprimer le ticket thermique (ou Ctrl+Entrée)' },
     { key: 'Espace', desc: 'Appoint exact (espèces reçues = total à payer)' },

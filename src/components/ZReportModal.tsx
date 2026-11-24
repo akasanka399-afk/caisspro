@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Printer,
@@ -101,6 +101,51 @@ export const ZReportModal: React.FC<ZReportModalProps> = ({
     }
   };
 
+  const shortcutRef = useRef({
+    handlePrint,
+    handlePrintBle,
+    onClose,
+    showBleModal,
+    isPrinting,
+    isPrintingBle,
+  });
+
+  shortcutRef.current = {
+    handlePrint,
+    handlePrintBle,
+    onClose,
+    showBleModal,
+    isPrinting,
+    isPrintingBle,
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const ctx = shortcutRef.current;
+      if (ctx.showBleModal) return;
+
+      if ((e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') || (e.shiftKey && e.key === 'F12')) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!ctx.isPrintingBle) {
+          ctx.handlePrintBle();
+        }
+      } else if (e.key === 'F12') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!ctx.isPrinting) {
+          ctx.handlePrint();
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        ctx.onClose();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
+
   const handleCopyWhatsApp = async () => {
     const success = await copyZReportToClipboard(session, business);
     if (success) {
@@ -193,7 +238,7 @@ export const ZReportModal: React.FC<ZReportModalProps> = ({
                   ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
                   : 'bg-cyan-950/50 hover:bg-cyan-900/60 text-cyan-300 border-cyan-500/40'
               }`}
-              title="Imprimer le rapport Z en Bluetooth BLE (58/80mm)"
+              title="Imprimer le rapport Z en Bluetooth BLE (58/80mm) · Ctrl+B"
             >
               {ble.connected ? (
                 <BluetoothConnected className="w-4 h-4" />
@@ -201,6 +246,13 @@ export const ZReportModal: React.FC<ZReportModalProps> = ({
                 <Bluetooth className="w-4 h-4" />
               )}
               <span>{isPrintingBle ? 'BLE...' : ble.connected ? `BLE ${ble.paperWidth}` : 'BLE'}</span>
+              <kbd className={`text-[9px] font-mono px-1 rounded ${
+                ble.connected
+                  ? isLight ? 'bg-blue-700 text-white' : 'bg-cyan-500 text-neutral-950'
+                  : isLight ? 'bg-blue-100 text-blue-800' : 'bg-cyan-950 text-cyan-300 border border-cyan-500/30'
+              }`}>
+                Ctrl+B
+              </kbd>
             </button>
 
             <button

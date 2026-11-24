@@ -35,6 +35,8 @@ import {
   PackagePlus,
   Bluetooth,
   BluetoothConnected,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
 import { ReceiptModal } from './ReceiptModal';
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
@@ -43,7 +45,7 @@ import { RecentSalesModal } from './RecentSalesModal';
 import { CancelSaleModal } from './CancelSaleModal';
 import { QuickAddScannedProductModal } from './QuickAddScannedProductModal';
 import { BluetoothPrinterModal } from './BluetoothPrinterModal';
-import { useBluetoothPrinter } from '../services/bluetoothPrinter';
+import { bluetoothPrinter, useBluetoothPrinter } from '../services/bluetoothPrinter';
 import { printThermalReceipt } from '../utils/printReceipt';
 
 export const DIRECT_LABEL_PRESETS = [
@@ -111,6 +113,25 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
   const [directCustomerNote, setDirectCustomerNote] = useState<string>('');
 
   const ble = useBluetoothPrinter();
+  const [isTopBarCollapsed, setIsTopBarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('kassapro_pos_toolbar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const toggleTopBar = () => {
+    playSoundEffect('beep');
+    setIsTopBarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('kassapro_pos_toolbar_collapsed', String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
   const [showBlePrinterModal, setShowBlePrinterModal] = useState<boolean>(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
   const [showCustomerModal, setShowCustomerModal] = useState<boolean>(false);
@@ -239,6 +260,51 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     }
   };
 
+  // Impression Bluetooth (BLE 58/80mm) ultra-rapide via raccourci Ctrl+B ou Shift+F12
+  const handleQuickBluetoothPrint = async () => {
+    const transactions = store.getTransactions(business.id);
+    const activeLastSale = lastSaleTx && lastSaleTx.status !== 'cancelled' ? lastSaleTx : null;
+    const latestActive = transactions.find((t) => t.status !== 'cancelled');
+    const targetTx = completedTx || activeLastSale || latestActive || transactions[0];
+
+    if (!targetTx) {
+      playSoundEffect('error');
+      showErrorNotice("Aucun ticket disponible pour l'impression Bluetooth rapide (Ctrl+B).");
+      return;
+    }
+
+    if (!bluetoothPrinter.isConnected()) {
+      playSoundEffect('beep');
+      if (!ble.isSupported) {
+        setShowBlePrinterModal(true);
+        return;
+      }
+      const connected = await bluetoothPrinter.connect();
+      if (!connected) {
+        setShowBlePrinterModal(true);
+        return;
+      }
+    }
+
+    try {
+      const result = await printThermalReceipt(targetTx, business, {
+        paperWidth: bluetoothPrinter.getPaperWidth(),
+        forceBluetooth: true,
+      });
+      playSoundEffect('cash');
+      setGlobalNotice({
+        message: `⚡ Ticket ${targetTx.ticketNumber} imprimé en Bluetooth (${result.paperWidth}) sur ${result.deviceName || 'Imprimante BLE'} !`,
+        type: 'success',
+      });
+      setTimeout(() => {
+        setGlobalNotice((prev) => (prev?.type === 'success' ? null : prev));
+      }, 4000);
+    } catch (err) {
+      playSoundEffect('error');
+      showErrorNotice((err as Error)?.message || "Échec de l'impression Bluetooth rapide.");
+    }
+  };
+
   // Keep latest state & handlers in a ref so global keyboard shortcuts (F1/F2/F3/...) never suffer from stale closures
   const keyboardContextRef = useRef({
     posMode,
@@ -272,6 +338,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     updateQuantity: (_productId: string, _delta: number) => {},
     handleDirectNumpadPress: (_val: string) => {},
     handlePrintTicket: () => {},
+    handleQuickBluetoothPrint: () => {},
   });
 
   // Keyboard shortcut listener for both modes (F1: Valider vente, F2: Annuler, F3: Ajouter quantité)
@@ -473,6 +540,19 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
           setDirectPaymentMethod('card');
         }
         playSoundEffect('beep');
+      } else if ((e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') || (e.shiftKey && e.key === 'F12')) {
+        // Ctrl+B ou Shift+F12 : Impression Bluetooth BLE rapide du dernier ticket
+        if (
+          ctx.completedTx ||
+          ctx.showBlePrinterModal ||
+          ctx.showRecentSalesModal ||
+          ctx.showCameraScannerModal ||
+          ctx.selectedTxForCancel !== null
+        ) {
+          return;
+        }
+        e.preventDefault();
+        ctx.handleQuickBluetoothPrint();
       } else if (e.key === 'F12') {
         e.preventDefault();
         ctx.handlePrintTicket();
@@ -483,6 +563,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         if (ctx.selectedTxForCancel !== null) setSelectedTxForCancel(null);
         else if (ctx.barcodeToCreate !== null) setBarcodeToCreate(null);
         else if (ctx.showRecentSalesModal) setShowRecentSalesModal(false);
+        else if (ctx.showBlePrinterModal) setShowBlePrinterModal(false);
         else if (ctx.showCameraScannerModal) {
           setShowCameraScannerModal(false);
           setCameraScanPurpose('sale');
@@ -858,7 +939,24 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     setAmountReceived('');
 
     if (shouldPrint) {
-      setCompletedTx(tx);
+      if (bluetoothPrinter.isConnected() && ble.autoPrintBle) {
+        playSoundEffect('cash');
+        printThermalReceipt(tx, business, { paperWidth: ble.paperWidth, forceBluetooth: true })
+          .then((res) => {
+            setGlobalNotice({
+              message: `⚡ Vente #${tx.id.slice(-6)} validée & imprimée en Bluetooth (${res.paperWidth}) sur ${res.deviceName || 'Imprimante BLE'} !`,
+              type: 'success',
+              actionLabel: 'Voir ticket',
+              onAction: () => setCompletedTx(tx),
+            });
+            setTimeout(() => {
+              setGlobalNotice((prev) => (prev?.type === 'success' ? null : prev));
+            }, 5000);
+          })
+          .catch(() => setCompletedTx(tx));
+      } else {
+        setCompletedTx(tx);
+      }
     } else {
       playSoundEffect('cash');
       setGlobalNotice({
@@ -1089,7 +1187,24 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     }, 100);
 
     if (shouldPrint) {
-      setCompletedTx(tx);
+      if (bluetoothPrinter.isConnected() && ble.autoPrintBle) {
+        playSoundEffect('cash');
+        printThermalReceipt(tx, business, { paperWidth: ble.paperWidth, forceBluetooth: true })
+          .then((res) => {
+            setGlobalNotice({
+              message: `⚡ Vente #${tx.id.slice(-6)} validée & imprimée en Bluetooth (${res.paperWidth}) sur ${res.deviceName || 'Imprimante BLE'} !`,
+              type: 'success',
+              actionLabel: 'Voir ticket',
+              onAction: () => setCompletedTx(tx),
+            });
+            setTimeout(() => {
+              setGlobalNotice((prev) => (prev?.type === 'success' ? null : prev));
+            }, 5000);
+          })
+          .catch(() => setCompletedTx(tx));
+      } else {
+        setCompletedTx(tx);
+      }
     } else {
       playSoundEffect('cash');
       setGlobalNotice({
@@ -1150,6 +1265,7 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
     updateQuantity,
     handleDirectNumpadPress,
     handlePrintTicket,
+    handleQuickBluetoothPrint,
   };
 
   return (
@@ -1158,176 +1274,247 @@ export const POSView: React.FC<POSViewProps> = ({ currentUser, business }) => {
         isLight ? 'bg-slate-100/70 text-slate-900' : 'bg-[#05070c] text-white'
       }`}
     >
-      {/* TOP DUAL-MODE SWITCHER BAR (Catalogue Articles vs Caisse Rapide Saisie Directe) */}
+      {/* TOP DUAL-MODE SWITCHER BAR (Pliable / Rabattable via bouton) */}
       <div
-        className={`sticky top-0 z-20 px-3 sm:px-4 py-2 border-b flex flex-wrap items-center justify-between gap-2 sm:gap-3 shrink-0 backdrop-blur-md ${
+        className={`sticky top-0 z-20 border-b shrink-0 backdrop-blur-md transition-all duration-200 ${
+          isTopBarCollapsed ? 'px-3 py-1' : 'px-3 sm:px-4 py-2'
+        } ${
           isLight ? 'bg-white/95 border-slate-200 shadow-2xs' : 'bg-[#080b18]/95 border-cyan-500/20'
         }`}
       >
-        {/* Mode Selector Tabs */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setPosMode('direct')}
-            className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-all cursor-pointer ${
-              posMode === 'direct'
-                ? isLight
-                  ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20 scale-102'
-                  : 'bg-cyan-400 text-neutral-950 font-black shadow-[0_0_18px_rgba(0,242,254,0.8)] scale-102'
-                : isLight
-                ? 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
-                : 'bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800'
-            }`}
-          >
-            <Zap className={`w-4 h-4 ${posMode === 'direct' ? 'fill-current' : ''}`} />
-            <span>⚡ CAISSE RAPIDE (Montant Direct)</span>
-            <kbd className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-              posMode === 'direct'
-                ? isLight ? 'bg-amber-600 text-white' : 'bg-cyan-500 text-neutral-950'
-                : isLight ? 'bg-slate-200 text-slate-700' : 'bg-neutral-800 text-neutral-300'
-            }`}>
-              F5
-            </kbd>
-          </button>
+        {isTopBarCollapsed ? (
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <button
+                type="button"
+                onClick={() => setPosMode(posMode === 'direct' ? 'catalog' : 'direct')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-black flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  isLight
+                    ? 'bg-amber-500/15 text-amber-800 hover:bg-amber-500/25 border border-amber-300'
+                    : 'bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 border border-cyan-500/30'
+                }`}
+                title="Basculer entre Caisse Rapide et Catalogue (F5)"
+              >
+                {posMode === 'direct' ? <Zap className="w-3.5 h-3.5" /> : <ShoppingCart className="w-3.5 h-3.5" />}
+                <span>{posMode === 'direct' ? 'Caisse Rapide' : `Catalogue (${products.length})`}</span>
+              </button>
 
-          <button
-            onClick={() => setPosMode('catalog')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-              posMode === 'catalog'
-                ? isLight
-                  ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20 scale-102'
-                  : 'bg-cyan-400 text-neutral-950 font-black shadow-[0_0_18px_rgba(0,242,254,0.8)] scale-102'
-                : isLight
-                ? 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
-                : 'bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800'
-            }`}
-          >
-            <ShoppingCart className="w-4 h-4" />
-            <span>Rayons & Catalogue ({products.length})</span>
-          </button>
-        </div>
+              {ble.connected && (
+                <button
+                  type="button"
+                  onClick={() => setShowBlePrinterModal(true)}
+                  className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 cursor-pointer"
+                  title={`Imprimante BLE connectée : ${ble.deviceName} (${ble.paperWidth}) · Ctrl+B`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>BLE {ble.paperWidth}</span>
+                </button>
+              )}
+            </div>
 
-        {/* Right Tools: Scanner Caméra + Douchette USB Status + Print Ticket + Keyboard Shortcut */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Bouton Scanner Caméra (F7) */}
-          <button
-            type="button"
-            onClick={() => setShowCameraScannerModal(true)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border cursor-pointer active:scale-95 ${
-              isLight
-                ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-2xs'
-                : 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border-cyan-400/50 shadow-[0_0_12px_rgba(0,242,254,0.2)]'
-            }`}
-            title="Activer le scanner de code-barres par caméra (F7)"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>Scan Caméra</span>
-            <kbd className={`text-[10px] font-mono px-1 rounded ${
-              isLight ? 'bg-amber-600 text-white' : 'bg-cyan-950 text-cyan-300 border border-cyan-500/30'
-            }`}>
-              F7
-            </kbd>
-          </button>
-
-          {/* Badge statut Mode Sans Impression Actif */}
-          <div
-            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all ${
-              isLight
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                : 'bg-emerald-950/40 text-emerald-300 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
-            }`}
-            title="Validation sans impression active par défaut [Touche Entrée]. Cliquez sur [+ Ticket] ou Shift+Entrée si le client souhaite un ticket papier."
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Sans impression : <span className="font-black text-emerald-600 dark:text-emerald-400">ACTIF</span></span>
+            <button
+              type="button"
+              onClick={toggleTopBar}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 border transition-colors cursor-pointer ${
+                isLight
+                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                  : 'bg-neutral-900 hover:bg-neutral-800 text-cyan-300 border-cyan-500/30'
+              }`}
+              title="Déplier la barre d'outils caisse (Scan, BLE, Impression, Historique...)"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+              <span>Déplier outils</span>
+            </button>
           </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+            {/* Mode Selector Tabs */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPosMode('direct')}
+                className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-all cursor-pointer ${
+                  posMode === 'direct'
+                    ? isLight
+                      ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20 scale-102'
+                      : 'bg-cyan-400 text-neutral-950 font-black shadow-[0_0_18px_rgba(0,242,254,0.8)] scale-102'
+                    : isLight
+                    ? 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                    : 'bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800'
+                }`}
+              >
+                <Zap className={`w-4 h-4 ${posMode === 'direct' ? 'fill-current' : ''}`} />
+                <span>⚡ CAISSE RAPIDE (Montant Direct)</span>
+                <kbd className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                  posMode === 'direct'
+                    ? isLight ? 'bg-amber-600 text-white' : 'bg-cyan-500 text-neutral-950'
+                    : isLight ? 'bg-slate-200 text-slate-700' : 'bg-neutral-800 text-neutral-300'
+                }`}>
+                  F5
+                </kbd>
+              </button>
 
-          {/* Badge statut Douchette USB connectée */}
-          <div
-            className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border ${
-              isLight
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                : 'bg-emerald-950/40 text-emerald-400 border-emerald-600/30'
-            }`}
-            title="Votre lecteur de code-barres USB est détecté et actif. Scannez un article à tout moment."
-          >
-            <Barcode className="w-3.5 h-3.5" />
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Douchette USB Prête</span>
+              <button
+                onClick={() => setPosMode('catalog')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                  posMode === 'catalog'
+                    ? isLight
+                      ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20 scale-102'
+                      : 'bg-cyan-400 text-neutral-950 font-black shadow-[0_0_18px_rgba(0,242,254,0.8)] scale-102'
+                    : isLight
+                    ? 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                    : 'bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800'
+                }`}
+              >
+                <ShoppingCart className="w-4 h-4" />
+                <span>Rayons & Catalogue ({products.length})</span>
+              </button>
+            </div>
+
+            {/* Right Tools: Scanner Caméra + Douchette USB Status + Print Ticket + Keyboard Shortcut + Replier */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Bouton Scanner Caméra (F7) */}
+              <button
+                type="button"
+                onClick={() => setShowCameraScannerModal(true)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border cursor-pointer active:scale-95 ${
+                  isLight
+                    ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-2xs'
+                    : 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border-cyan-400/50 shadow-[0_0_12px_rgba(0,242,254,0.2)]'
+                }`}
+                title="Activer le scanner de code-barres par caméra (F7)"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>Scan Caméra</span>
+                <kbd className={`text-[10px] font-mono px-1 rounded ${
+                  isLight ? 'bg-amber-600 text-white' : 'bg-cyan-950 text-cyan-300 border border-cyan-500/30'
+                }`}>
+                  F7
+                </kbd>
+              </button>
+
+              {/* Badge statut Mode Sans Impression Actif */}
+              <div
+                className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-all ${
+                  isLight
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                    : 'bg-emerald-950/40 text-emerald-300 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+                }`}
+                title="Validation sans impression active par défaut [Touche Entrée]. Cliquez sur [+ Ticket] ou Shift+Entrée si le client souhaite un ticket papier."
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>Sans impression : <span className="font-black text-emerald-600 dark:text-emerald-400">ACTIF</span></span>
+              </div>
+
+              {/* Badge statut Douchette USB connectée */}
+              <div
+                className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border ${
+                  isLight
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : 'bg-emerald-950/40 text-emerald-400 border-emerald-600/30'
+                }`}
+                title="Votre lecteur de code-barres USB est détecté et actif. Scannez un article à tout moment."
+              >
+                <Barcode className="w-3.5 h-3.5" />
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span>Douchette USB Prête</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowRecentSalesModal(true)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 cursor-pointer ${
+                  isLight
+                    ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200 shadow-2xs'
+                    : 'bg-rose-950/30 hover:bg-rose-950/50 text-rose-300 border-rose-500/30'
+                }`}
+                title="Annuler (F2) ou consulter l'historique des ventes"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Historique / Annuler</span>
+                <span className="text-[10px] font-mono opacity-70">F2</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowBlePrinterModal(true)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 cursor-pointer ${
+                  ble.connected
+                    ? isLight
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 shadow-2xs'
+                      : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 border-cyan-300 font-black shadow-[0_0_12px_rgba(0,242,254,0.3)]'
+                    : isLight
+                    ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 shadow-2xs'
+                    : 'bg-[#0e1428] hover:bg-[#141b36] text-cyan-300 border-cyan-500/30'
+                }`}
+                title={
+                  ble.connected
+                    ? `Imprimante BLE connectée : ${ble.deviceName} (${ble.paperWidth}) · Raccourci impression rapide : Ctrl+B`
+                    : `Configurer une imprimante Bluetooth POS (${ble.paperWidth}) · Impression rapide : Ctrl+B`
+                }
+              >
+                {ble.connected ? (
+                  <BluetoothConnected className="w-3.5 h-3.5" />
+                ) : (
+                  <Bluetooth className="w-3.5 h-3.5" />
+                )}
+                <span>BLE {ble.paperWidth}</span>
+                <kbd className={`text-[9px] font-mono px-1 rounded ${
+                  ble.connected
+                    ? isLight ? 'bg-blue-700 text-white' : 'bg-cyan-500 text-neutral-950'
+                    : isLight ? 'bg-blue-100 text-blue-800' : 'bg-cyan-950 text-cyan-300 border border-cyan-500/30'
+                }`}>
+                  Ctrl+B
+                </kbd>
+                {ble.connected && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePrintTicket}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 cursor-pointer ${
+                  isLight
+                    ? 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-2xs'
+                    : 'bg-[#0e1428] hover:bg-[#141b36] text-cyan-300 border-cyan-500/40 shadow-[0_0_10px_rgba(0,242,254,0.15)]'
+                }`}
+                title={`Imprimer le dernier ticket en ${ble.paperWidth} (F12)`}
+              >
+                <Printer className={`w-3.5 h-3.5 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
+                <span>Imprimer ({ble.paperWidth})</span>
+                <span className="text-[10px] font-mono opacity-70">F12</span>
+              </button>
+
+              <button
+                onClick={() => setShowShortcutsModal(true)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border whitespace-nowrap shrink-0 cursor-pointer ${
+                  isLight
+                    ? 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
+                    : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border-neutral-700'
+                }`}
+                title="Raccourcis Clavier (?) — F1 Valider · F2 Annuler · F3 +Qté"
+              >
+                <Keyboard className="w-3.5 h-3.5 text-amber-500" />
+                <span className="hidden sm:inline">Raccourcis</span>
+                <span className="text-[10px] font-mono opacity-60">?</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={toggleTopBar}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 border whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+                  isLight
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                    : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border-neutral-700'
+                }`}
+                title="Replier cette barre d'outils pour gagner de l'espace"
+              >
+                <ChevronUp className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Replier</span>
+              </button>
+            </div>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setShowRecentSalesModal(true)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 cursor-pointer ${
-              isLight
-                ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200 shadow-2xs'
-                : 'bg-rose-950/30 hover:bg-rose-950/50 text-rose-300 border-rose-500/30'
-            }`}
-            title="Annuler (F2) ou consulter l'historique des ventes"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Historique / Annuler</span>
-            <span className="text-[10px] font-mono opacity-70">F2</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowBlePrinterModal(true)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 cursor-pointer ${
-              ble.connected
-                ? isLight
-                  ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 shadow-2xs'
-                  : 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950 border-cyan-300 font-black shadow-[0_0_12px_rgba(0,242,254,0.3)]'
-                : isLight
-                ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 shadow-2xs'
-                : 'bg-[#0e1428] hover:bg-[#141b36] text-cyan-300 border-cyan-500/30'
-            }`}
-            title={
-              ble.connected
-                ? `Imprimante BLE connectée : ${ble.deviceName} (${ble.paperWidth})`
-                : `Configurer une imprimante Bluetooth POS (Format actif : ${ble.paperWidth})`
-            }
-          >
-            {ble.connected ? (
-              <BluetoothConnected className="w-3.5 h-3.5" />
-            ) : (
-              <Bluetooth className="w-3.5 h-3.5" />
-            )}
-            <span>BLE {ble.paperWidth}</span>
-            {ble.connected && (
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={handlePrintTicket}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all border whitespace-nowrap shrink-0 cursor-pointer ${
-              isLight
-                ? 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-2xs'
-                : 'bg-[#0e1428] hover:bg-[#141b36] text-cyan-300 border-cyan-500/40 shadow-[0_0_10px_rgba(0,242,254,0.15)]'
-            }`}
-            title={`Imprimer le dernier ticket en ${ble.paperWidth} (F12)`}
-          >
-            <Printer className={`w-3.5 h-3.5 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
-            <span>Imprimer ({ble.paperWidth})</span>
-            <span className="text-[10px] font-mono opacity-70">F12</span>
-          </button>
-
-          <button
-            onClick={() => setShowShortcutsModal(true)}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border whitespace-nowrap shrink-0 cursor-pointer ${
-              isLight
-                ? 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
-                : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border-neutral-700'
-            }`}
-            title="Raccourcis Clavier (?) — F1 Valider · F2 Annuler · F3 +Qté"
-          >
-            <Keyboard className="w-3.5 h-3.5 text-amber-500" />
-            <span className="hidden sm:inline">Raccourcis</span>
-            <span className="text-[10px] font-mono opacity-60">?</span>
-          </button>
-        </div>
+        )}
       </div>
 
       {/* Global Notice Toast (Impression, alertes caisse) */}

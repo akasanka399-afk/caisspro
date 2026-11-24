@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Business, SaleTransaction } from '../types';
 import { useTheme } from '../services/themeContext';
 import { playSoundEffect } from '../services/store';
@@ -108,6 +108,51 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
       setIsPrintingBle(false);
     }
   };
+
+  const shortcutRef = useRef({
+    handlePrint,
+    handlePrintBluetooth,
+    onClose,
+    showBleModal,
+    isPrinting,
+    isPrintingBle,
+  });
+
+  shortcutRef.current = {
+    handlePrint,
+    handlePrintBluetooth,
+    onClose,
+    showBleModal,
+    isPrinting,
+    isPrintingBle,
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const ctx = shortcutRef.current;
+      if (ctx.showBleModal) return;
+
+      if ((e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') || (e.shiftKey && e.key === 'F12')) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!ctx.isPrintingBle) {
+          ctx.handlePrintBluetooth();
+        }
+      } else if (e.key === 'F12') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!ctx.isPrinting) {
+          ctx.handlePrint();
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        ctx.onClose();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
 
   const handleDownload = () => {
     playSoundEffect('beep');
@@ -471,8 +516,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
               }`}
               title={
                 ble.connected
-                  ? `Imprimer directement en Bluetooth (${ble.paperWidth})`
-                  : 'Connecter une imprimante thermique Bluetooth BLE'
+                  ? `Imprimer directement en Bluetooth (${ble.paperWidth}) · Ctrl+B`
+                  : 'Connecter une imprimante thermique Bluetooth BLE (Ctrl+B)'
               }
             >
               {ble.connected ? (
@@ -487,6 +532,13 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, busines
                   ? `BLE (${ble.paperWidth})`
                   : 'Bluetooth BLE'}
               </span>
+              <kbd className={`text-[9px] font-mono px-1 rounded ${
+                ble.connected
+                  ? isLight ? 'bg-blue-700 text-white' : 'bg-cyan-500 text-neutral-950'
+                  : isLight ? 'bg-blue-100 text-blue-800' : 'bg-cyan-950 text-cyan-300 border border-cyan-500/30'
+              }`}>
+                Ctrl+B
+              </kbd>
             </button>
 
             <button
